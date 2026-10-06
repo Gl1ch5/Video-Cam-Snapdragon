@@ -19,18 +19,29 @@ class Stabilizer(private val p: Params) {
         val tauMinSec: Double = 0.04,
         /** Time constant of the intentional-motion velocity estimate. */
         val velTauSec: Double = 0.25,
+        /** Adaptive crop: tan(half horizontal FOV) of the output frame, and the crop range. */
+        val tanHalfFov: Double = 0.705,
+        val minCrop: Double = 1.03,
+        val maxCrop: Double = 1.12,
+        val attackSec: Double = 0.15,
+        val releaseSec: Double = 1.5,
     )
 
     private var qv: Quat? = null
     private var prevReal: Quat? = null
     private var prevT = 0L
     private val vel = DoubleArray(3)
+    private var peakDeg = 0.0
+
+    /** Current zoom-in factor: only as large as the recent shake needs, so the picture stays as sharp as possible. */
+    var crop = (p.minCrop + p.maxCrop) / 2
+        private set
 
     /** Last correction angle (deg), for stats. */
     var lastCorrectionDeg = 0.0
         private set
 
-    fun reset() { qv = null; prevReal = null; vel.fill(0.0) }
+    fun reset() { qv = null; prevReal = null; vel.fill(0.0); peakDeg = 0.0 }
 
     /** Feeds the real orientation at frame centre time [tNs]; returns the virtual camera orientation. */
     fun update(tNs: Long, real: Quat): Quat {
@@ -47,7 +58,8 @@ class Stabilizer(private val p: Params) {
         for (i in 0..2) vel[i] += (d[i] / dt - vel[i]) * a
         val base = (cur * Quat.fromRotVec(vel[0] * dt, vel[1] * dt, vel[2] * dt)).normalized()
 
-        val maxRad = Math.toRadians(p.maxAngleDeg)
+        // Margin the current crop can hide (90 % of it), never more than the absolute cap.
+        val maxRad = minOf(Math.toRadians(p.maxAngleDeg), kotlin.math.atan((1.0 - 1.0 / crop) * p.tanHalfFov * 0.9))
         val tight = ((real.conj() * base).angle() / maxRad).coerceIn(0.0, 1.0)
         val tau = p.tauMaxSec + (p.tauMinSec - p.tauMaxSec) * tight * tight
         var v = Quat.slerp(base, real, 1.0 - exp(-dt / tau))
@@ -59,6 +71,13 @@ class Stabilizer(private val p: Params) {
         prevReal = real
         prevT = tNs
         lastCorrectionDeg = Math.toDegrees((real.conj() * v).angle())
+
+        // Peak-hold of the excursion drives the crop: fast attack, slow release.
+        peakDeg = if (lastCorrectionDeg > peakDeg) lastCorrectionDeg else peakDeg * exp(-dt / p.releaseSec)
+        val need = Math.toRadians(peakDeg * 1.2 + 0.6)
+        val target = (1.0 / (1.0 - kotlin.math.tan(need) / p.tanHalfFov)).coerceIn(p.minCrop, p.maxCrop)
+        val rate = if (target > crop) p.attackSec else p.releaseSec
+        crop += (target - crop) * (1.0 - exp(-dt / rate))
         return v
     }
 

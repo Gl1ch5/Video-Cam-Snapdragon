@@ -319,7 +319,7 @@ class StabPipeline(
         val cx = width / 2f + (k[2] - width / 2f) * z
         val cy = height / 2f + (k[3] - height / 2f) * z
         GLES20.glUniform4f(l["uK"]!!, k[0] * z, k[1] * z, cx, cy)
-        GLES20.glUniform1f(l["uZoom"]!!, if (enabled) crop else 1f)
+        GLES20.glUniform1f(l["uZoom"]!!, if (enabled) stabilizer.crop.toFloat() else 1f)
         GLES20.glUniform1i(l["uPreview"]!!, if (preview) previewRot else 0)
         GLES20.glUniform1i(l["uHdr"]!!, if (is10bit) 1 else 0)
         GLES20.glUniform1f(l["uSharp"]!!, sharpen)

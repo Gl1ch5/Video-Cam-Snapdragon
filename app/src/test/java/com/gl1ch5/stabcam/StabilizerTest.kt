@@ -79,6 +79,23 @@ class StabilizerTest {
     }
 }
 
+class AdaptiveCropTest {
+    @Test
+    fun cropGrowsWithShakeAndRelaxesAtRest() {
+        val st = Stabilizer(Stabilizer.Params())
+        var t = 0L
+        fun yaw(d: Double) = Quat.fromRotVec(0.0, Math.toRadians(d), 0.0)
+        // calm hand: crop should stay near the minimum
+        for (i in 0 until 300) { st.update(t, yaw(0.1 * sin(2 * PI * 3 * t / 1e9))); t += 16_666_667L }
+        val calm = st.crop
+        // violent shake: crop must grow
+        for (i in 0 until 300) { st.update(t, yaw(4.0 * sin(2 * PI * 2 * t / 1e9))); t += 16_666_667L }
+        val shaky = st.crop
+        assertTrue("calm $calm shaky $shaky", shaky > calm + 0.03)
+        assertTrue(shaky <= 1.12 + 1e-9 && calm >= 1.03 - 1e-9)
+    }
+}
+
 class IdentityRowsTest {
     @Test
     fun identityFillsAnySizeWithoutOverflow() {
