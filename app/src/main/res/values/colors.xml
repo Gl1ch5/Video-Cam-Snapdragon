@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="bg">#FF000000</color>
+    <color name="glass">#73000000</color>
+    <color name="glass_strong">#B3141414</color>
+    <color name="accent">#FFFFB020</color>
+    <color name="rec_red">#FFE53935</color>
+    <color name="text">#FFFFFFFF</color>
+    <color name="text_dim">#99FFFFFF</color>
+</resources>

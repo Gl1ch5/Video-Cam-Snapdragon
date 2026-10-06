@@ -1,0 +1,245 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/bg">
+
+    <com.gl1ch5.stabcam.ui.AspectFrameLayout
+        android:id="@+id/previewFrame"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_gravity="center">
+
+        <SurfaceView
+            android:id="@+id/preview"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent" />
+
+        <View
+            android:id="@+id/shutterFlash"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:alpha="0"
+            android:background="@color/bg" />
+    </com.gl1ch5.stabcam.ui.AspectFrameLayout>
+
+    <!-- Top bar -->
+    <LinearLayout
+        android:id="@+id/topBar"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_gravity="top"
+        android:layout_marginStart="16dp"
+        android:layout_marginTop="44dp"
+        android:layout_marginEnd="16dp"
+        android:gravity="center_vertical"
+        android:orientation="horizontal">
+
+        <LinearLayout
+            android:id="@+id/pillLeft"
+            android:layout_width="wrap_content"
+            android:layout_height="48dp"
+            android:background="@drawable/bg_pill"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:paddingStart="6dp"
+            android:paddingEnd="14dp">
+
+            <TextView
+                android:id="@+id/btnOis"
+                style="@style/PillToggle"
+                android:text="OIS" />
+
+            <TextView
+                android:id="@+id/btnEis"
+                style="@style/PillToggle"
+                android:text="EIS" />
+
+            <TextView
+                android:id="@+id/btnEv"
+                style="@style/PillToggle"
+                android:text="EV 0.0" />
+        </LinearLayout>
+
+        <Space
+            android:layout_width="0dp"
+            android:layout_height="1dp"
+            android:layout_weight="1" />
+
+        <TextView
+            android:id="@+id/btnQuality"
+            android:layout_width="wrap_content"
+            android:layout_height="48dp"
+            android:background="@drawable/bg_pill"
+            android:gravity="center"
+            android:paddingStart="18dp"
+            android:paddingEnd="18dp"
+            android:text="4K·60"
+            android:textColor="@color/text"
+            android:textSize="16sp"
+            android:fontFamily="sans-serif-medium" />
+
+        <ImageButton
+            android:id="@+id/btnSettings"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:layout_marginStart="10dp"
+            android:background="@drawable/bg_circle"
+            android:contentDescription="@string/settings"
+            android:src="@drawable/ic_menu" />
+    </LinearLayout>
+
+    <!-- Recording timer -->
+    <LinearLayout
+        android:id="@+id/recIndicator"
+        android:layout_width="wrap_content"
+        android:layout_height="36dp"
+        android:layout_gravity="top|center_horizontal"
+        android:layout_marginTop="50dp"
+        android:background="@drawable/bg_pill"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:paddingStart="14dp"
+        android:paddingEnd="14dp"
+        android:visibility="gone">
+
+        <View
+            android:id="@+id/recDot"
+            android:layout_width="8dp"
+            android:layout_height="8dp"
+            android:background="@drawable/bg_rec_dot" />
+
+        <TextView
+            android:id="@+id/recTime"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="8dp"
+            android:fontFamily="monospace"
+            android:text="00:00"
+            android:textColor="@color/text"
+            android:textSize="16sp" />
+    </LinearLayout>
+
+    <TextView
+        android:id="@+id/info"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="top|start"
+        android:layout_marginStart="20dp"
+        android:layout_marginTop="100dp"
+        android:background="@drawable/bg_pill"
+        android:paddingStart="10dp"
+        android:paddingTop="4dp"
+        android:paddingEnd="10dp"
+        android:paddingBottom="4dp"
+        android:textColor="@color/text_dim"
+        android:textSize="11sp" />
+
+    <!-- EV slider -->
+    <LinearLayout
+        android:id="@+id/evPanel"
+        android:layout_width="match_parent"
+        android:layout_height="52dp"
+        android:layout_gravity="bottom"
+        android:layout_marginStart="24dp"
+        android:layout_marginEnd="24dp"
+        android:layout_marginBottom="270dp"
+        android:background="@drawable/bg_pill_strong"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:paddingStart="16dp"
+        android:paddingEnd="8dp"
+        android:visibility="gone">
+
+        <TextView
+            android:id="@+id/evValue"
+            android:layout_width="56dp"
+            android:layout_height="wrap_content"
+            android:text="0.0"
+            android:textColor="@color/accent"
+            android:textSize="15sp" />
+
+        <SeekBar
+            android:id="@+id/evSeek"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1" />
+    </LinearLayout>
+
+    <!-- Zoom chips -->
+    <LinearLayout
+        android:id="@+id/zoomRow"
+        android:layout_width="wrap_content"
+        android:layout_height="48dp"
+        android:layout_gravity="bottom|center_horizontal"
+        android:layout_marginBottom="200dp"
+        android:background="@drawable/bg_pill"
+        android:gravity="center"
+        android:orientation="horizontal"
+        android:paddingStart="4dp"
+        android:paddingEnd="4dp" />
+
+    <!-- Shutter row -->
+    <LinearLayout
+        android:id="@+id/controls"
+        android:layout_width="match_parent"
+        android:layout_height="96dp"
+        android:layout_gravity="bottom"
+        android:layout_marginBottom="88dp"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:paddingStart="40dp"
+        android:paddingEnd="40dp">
+
+        <ImageView
+            android:id="@+id/thumb"
+            android:layout_width="56dp"
+            android:layout_height="56dp"
+            android:background="@drawable/bg_thumb"
+            android:clipToOutline="true"
+            android:contentDescription="@string/gallery"
+            android:scaleType="centerCrop" />
+
+        <Space
+            android:layout_width="0dp"
+            android:layout_height="1dp"
+            android:layout_weight="1" />
+
+        <com.gl1ch5.stabcam.ui.RecordButton
+            android:id="@+id/btnRecord"
+            android:layout_width="88dp"
+            android:layout_height="88dp"
+            android:contentDescription="@string/record" />
+
+        <Space
+            android:layout_width="0dp"
+            android:layout_height="1dp"
+            android:layout_weight="1" />
+
+        <ImageButton
+            android:id="@+id/btnFlip"
+            android:layout_width="56dp"
+            android:layout_height="56dp"
+            android:background="@drawable/bg_circle"
+            android:contentDescription="@string/flip"
+            android:src="@drawable/ic_flip" />
+    </LinearLayout>
+
+    <!-- Mode label: this app is video-only -->
+    <TextView
+        android:id="@+id/modeLabel"
+        android:layout_width="wrap_content"
+        android:layout_height="44dp"
+        android:layout_gravity="bottom|center_horizontal"
+        android:layout_marginBottom="28dp"
+        android:background="@drawable/bg_pill_strong"
+        android:fontFamily="sans-serif-medium"
+        android:gravity="center"
+        android:letterSpacing="0.05"
+        android:paddingStart="28dp"
+        android:paddingEnd="28dp"
+        android:text="@string/mode_video"
+        android:textColor="@color/accent"
+        android:textSize="17sp" />
+</FrameLayout>

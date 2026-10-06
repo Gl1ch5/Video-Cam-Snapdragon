@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">StabCam</string>
+    <string name="mode_video">ВИДЕО</string>
+    <string name="settings">Настройки</string>
+    <string name="flip">Сменить камеру</string>
+    <string name="gallery">Галерея</string>
+    <string name="record">Запись</string>
+</resources>

@@ -1,0 +1,10 @@
+{
+  "name": "Snapdragon (generic)",
+  "description": "Любое устройство на Qualcomm Snapdragon: HEVC, OIS вкл, стоковый EIS выкл.",
+  "priority": 10,
+  "match": { "socManufacturer": ["QTI", "Qualcomm"] },
+  "config": {
+    "video": { "codec": "hevc" },
+    "camera": { "ois": true, "stockEis": false, "noiseReduction": "fast", "edge": "fast" }
+  }
+}
