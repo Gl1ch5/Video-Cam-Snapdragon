@@ -342,6 +342,8 @@ class SettingsActivity : Activity() {
         toggle("Режим ПОСТ (RAW + гиро-лог)", "Битрейт выше, кроп/шумодав/LUT не применяются.", bool(e, "post.enabled", false)) { repo.set("post.enabled", it) }
         toggle("Копия .gcsv в Download/StabCam", "Для Gyroflow на ПК.", bool(e, "post.exportGcsv", true)) { repo.set("post.exportGcsv", it) }
 
+        action("Обработка записей ПОСТ", "Стабилизация с предвидением, шумодав, LUT на телефоне за 10–20 с", "Открыть") { startActivity(Intent(this, PostActivity::class.java)) }
+
         section("Стабилизация (тонко)")
         val cur = repo.load().gyroAxes
         val idx = GyroTracker.CANDIDATES.indexOf(cur)

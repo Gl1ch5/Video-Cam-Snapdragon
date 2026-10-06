@@ -555,7 +555,7 @@ class VideoCamera(private val ctx: Context, private val listener: Listener) {
                 .put("width", q.width).put("height", q.height).put("fps", q.fps)
                 .put("baseTsNs", base).put("orientationHint", recordHint).put("sensorOrientation", c.sensorOrientation)
                 .put("intrinsics", org.json.JSONArray(k.map { it.toDouble() }))
-                .put("readoutNs", p.readout).put("hdr", p.is10bit)
+                .put("readoutNs", p.readout).put("hdr", p.is10bit).put("zoom", controls.zoom.toDouble())
                 .put("gyroAxes", org.json.JSONArray(cfg.gyroAxes))
                 .put("frames", frames)
             java.io.File(dir, "$nameBase.meta.json").writeText(meta.toString())
