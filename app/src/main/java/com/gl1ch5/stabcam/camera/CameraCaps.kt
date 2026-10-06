@@ -50,7 +50,10 @@ class CameraCaps(val id: String, val chars: CameraCharacteristics) {
         return fpsRanges.any { it.upper >= q.fps && it.lower <= q.fps }
     }
 
-    val supportedQualities: List<Quality> get() = Quality.entries.filter { supports(it) }
+    fun qualities(forceAll: Boolean): List<Quality> =
+        if (forceAll) Quality.entries.filter { it.fps <= (fpsRanges.maxOfOrNull { r -> r.upper } ?: 30) } else Quality.entries.filter { supports(it) }
+
+    val supportedQualities: List<Quality> get() = qualities(false)
 
     /** Fixed-fps range if available (what video wants), otherwise the widest one that reaches [fps]. */
     fun fpsRangeFor(fps: Int): Range<Int> =
@@ -99,6 +102,8 @@ class CameraCaps(val id: String, val chars: CameraCharacteristics) {
             ?.filter { it.width >= 1920 }
             ?.joinToString { s -> "${s.width}x${s.height}@${(1e9 / map.getOutputMinFrameDuration(MediaRecorder::class.java, s)).toInt()}" }
         appendLine("Recorder sizes: $recSizes")
+        val hs = runCatching { map.highSpeedVideoSizes?.joinToString { s -> "${s.width}x${s.height}:" + map.getHighSpeedVideoFpsRangesFor(s).joinToString("/") { "${it.lower}-${it.upper}" } } }.getOrNull()
+        appendLine("High-speed sizes: $hs")
         appendLine("HEVC 4K60 encoder: ${encoderSupports(MediaFormat.MIMETYPE_VIDEO_HEVC, 3840, 2160, 60)}")
         val vendorReq = chars.availableCaptureRequestKeys.map { it.name }.filterNot { it.startsWith("android.") }
         val vendorRes = chars.availableCaptureResultKeys.map { it.name }.filterNot { it.startsWith("android.") }

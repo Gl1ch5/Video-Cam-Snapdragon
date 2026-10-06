@@ -37,7 +37,10 @@ class AppConfig(val json: JSONObject) {
         }
     }
 
-    val showInfo: Boolean = ui.optBoolean("showInfo", true)
+    /** Offer every quality even if Camera2 does not advertise it (OEMs hide modes from third-party apps). */
+    val forceAllQualities: Boolean = camera.optBoolean("forceAllQualities", false)
+
+    val showInfo: Boolean = ui.optBoolean("showInfo", false)
 
     data class VendorTag(val name: String, val type: String, val value: Any?)
 }
@@ -45,6 +48,7 @@ class AppConfig(val json: JSONObject) {
 enum class Quality(val id: String, val width: Int, val height: Int, val fps: Int, val label: String, val defaultMbps: Double) {
     UHD60("4K60", 3840, 2160, 60, "4K·60", 120.0),
     UHD30("4K30", 3840, 2160, 30, "4K·30", 80.0),
+    K33_60("3.3K60", 3280, 1856, 60, "3.3K·60", 70.0),
     FHD60("1080p60", 1920, 1080, 60, "1080·60", 40.0),
     FHD30("1080p30", 1920, 1080, 30, "1080·30", 24.0);
 

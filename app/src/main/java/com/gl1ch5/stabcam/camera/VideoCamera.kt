@@ -212,7 +212,7 @@ class VideoCamera(private val ctx: Context, private val listener: Listener) {
             }
             set(
                 CaptureRequest.LENS_OPTICAL_STABILIZATION_MODE,
-                if (c.ois && caps.hasOis) CameraMetadata.LENS_OPTICAL_STABILIZATION_MODE_ON
+                if (c.ois) CameraMetadata.LENS_OPTICAL_STABILIZATION_MODE_ON
                 else CameraMetadata.LENS_OPTICAL_STABILIZATION_MODE_OFF
             )
             set(

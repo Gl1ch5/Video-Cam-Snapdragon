@@ -15,9 +15,10 @@
     "noiseReduction": "fast",
     "edge": "fast",
     "distortionCorrection": "fast",
+    "forceAllQualities": false,
     "vendorTags": []
   },
   "ui": {
-    "showInfo": true
+    "showInfo": false
   }
 }

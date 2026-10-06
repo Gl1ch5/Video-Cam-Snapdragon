@@ -133,10 +133,6 @@ class MainActivity : Activity(), VideoCamera.Listener {
 
         btnRecord.setOnClickListener { toggleRecording() }
         btnOis.setOnClickListener {
-            if (caps?.hasOis != true) {
-                toast("OIS на этой камере недоступен")
-                return@setOnClickListener
-            }
             setControls(controls.copy(ois = !controls.ois))
             repo.set("camera.ois", controls.ois)
             toast(if (controls.ois) "Аппаратный OIS: вкл" else "Аппаратный OIS: выкл")
@@ -237,9 +233,8 @@ class MainActivity : Activity(), VideoCamera.Listener {
         }
         back = c.facingBack
         caps = c
-        val supported = c.supportedQualities
+        val supported = c.qualities(cfg.forceAllQualities)
         if (quality !in supported) quality = supported.firstOrNull() ?: Quality.FHD30
-        if (!c.hasOis) controls = controls.copy(ois = false)
 
         val size = c.previewSize()
         if (pendingPreviewSize != size) {
@@ -263,7 +258,7 @@ class MainActivity : Activity(), VideoCamera.Listener {
     private fun cycleQuality() {
         val c = caps ?: return
         if (camera.isRecording) return
-        val list = c.supportedQualities
+        val list = c.qualities(cfg.forceAllQualities)
         if (list.isEmpty()) return
         quality = list[(list.indexOf(quality) + 1) % list.size]
         repo.set("video.quality", quality.id)
@@ -334,7 +329,7 @@ class MainActivity : Activity(), VideoCamera.Listener {
 
     private fun updateUi() {
         val c = caps ?: return
-        styleToggle(btnOis, controls.ois && c.hasOis, c.hasOis)
+        styleToggle(btnOis, controls.ois, true)
         styleToggle(btnEis, controls.stockEis && c.hasStockEis, c.hasStockEis)
         val ev = controls.evIndex * c.evStep
         btnEv.text = String.format(Locale.US, "EV %+.1f", ev).replace("+0.0", "0.0")
@@ -347,7 +342,7 @@ class MainActivity : Activity(), VideoCamera.Listener {
         val codec = if (cfg.codec.equals("hevc", true)) "HEVC" else "H.264"
         val preset = repo.activePreset?.name ?: "default"
         info.text = "${quality.width}×${quality.height}@${quality.fps} · $codec ${cfg.bitrateFor(quality) / 1_000_000} Мбит/с · " +
-            "OIS ${if (controls.ois && c.hasOis) "вкл" else "выкл"} · EIS ${if (controls.stockEis) "вкл" else "выкл"} · $preset"
+            "OIS ${if (controls.ois) "вкл" else "выкл"} · EIS ${if (controls.stockEis) "вкл" else "выкл"} · $preset"
         info.visibility = if (cfg.showInfo && !camera.isRecording) View.VISIBLE else View.GONE
     }
 
