@@ -278,8 +278,9 @@ class StabPipeline(
             out vec4 o;
 
             vec3 fetch(vec2 q) {
-                vec4 tc = uST * vec4(q.x, 1.0 - q.y, 0.0, 1.0);
-                return texture(uTex, tc.xy).rgb;
+                // Raw buffer coordinates (top row = 0): the camera service pre-rotates the SurfaceTexture
+                // transform to portrait, but the gyro/intrinsics maths needs the unrotated sensor frame.
+                return texture(uTex, q).rgb;
             }
 
             // Catmull-Rom with 9 bilinear taps: keeps edges crisp after the warp (bilinear alone softens them).
