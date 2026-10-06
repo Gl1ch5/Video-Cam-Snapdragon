@@ -1,0 +1,25 @@
+{
+  "name": "Samsung Galaxy",
+  "description": "Консервативный профиль для Galaxy: только режимы, объявленные камерой, HEVC. Не проверялся на устройстве.",
+  "priority": 15,
+  "match": {
+    "manufacturer": [
+      "samsung"
+    ]
+  },
+  "config": {
+    "camera": {
+      "ois": true,
+      "stockEis": false,
+      "forceAllQualities": false,
+      "noiseReduction": "fast"
+    },
+    "video": {
+      "codec": "hevc"
+    },
+    "stab": {
+      "denoise": 0.45,
+      "sharpen": 0.3
+    }
+  }
+}

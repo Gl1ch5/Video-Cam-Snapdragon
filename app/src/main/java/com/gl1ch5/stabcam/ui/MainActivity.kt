@@ -38,6 +38,11 @@ import com.gl1ch5.stabcam.config.Quality
 import com.gl1ch5.stabcam.update.Updater
 import com.gl1ch5.stabcam.lut.Luts
 import com.gl1ch5.stabcam.config.Presets
+import com.gl1ch5.stabcam.config.QuickProfiles
+import com.gl1ch5.stabcam.module.ModuleManager
+import android.hardware.Sensor
+import android.hardware.SensorManager
+import android.view.GestureDetector
 import com.gl1ch5.stabcam.stab.GyroTracker
 import org.json.JSONArray
 import com.gl1ch5.stabcam.util.Logger
@@ -62,6 +67,9 @@ class MainActivity : Activity(), VideoCamera.Listener {
     private lateinit var lutPicker: LutPicker
     private lateinit var quickMenu: QuickMenu
     private var needReopen = false
+    private var hasGyro = true
+    private var qualityRetries = 0
+    private lateinit var modeLabel: TextView
     private lateinit var btnEv: TextView
     private lateinit var btnQuality: TextView
     private lateinit var btnSettings: ImageButton
@@ -147,6 +155,8 @@ class MainActivity : Activity(), VideoCamera.Listener {
         btnEis = findViewById(R.id.btnEis)
         btnStab = findViewById(R.id.btnStab)
         btnHdr = findViewById(R.id.btnHdr)
+        hasGyro = getSystemService(SensorManager::class.java).getDefaultSensor(Sensor.TYPE_GYROSCOPE) != null
+        modeLabel = findViewById(R.id.modeLabel)
         btnLut = findViewById(R.id.btnLut)
         lutPicker = LutPicker(this, { id -> selectLut(id) }, {
             startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("*/*"), REQ_LUT)
@@ -172,23 +182,39 @@ class MainActivity : Activity(), VideoCamera.Listener {
 
         btnRecord.setOnClickListener { toggleRecording() }
         btnOis.setOnClickListener {
-            setControls(controls.copy(ois = !controls.ois))
-            repo.set("camera.ois", controls.ois)
-            toast(if (controls.ois) "Аппаратный OIS: вкл" else "Аппаратный OIS: выкл")
+            if (camera.isRecording) return@setOnClickListener
+            // ON → AUTO (off while STAB is on, avoids OIS and gyro-EIS correcting the same motion) → OFF → ON
+            val next = (oisMode() + 1) % 3
+            val policyBefore = cfg.stabOisOff
+            repo.set("camera.ois", next != 2)
+            repo.set("stab.oisPolicy", if (next == 1) "off" else "keep")
+            cfg = repo.load()
+            controls = controls.copy(ois = next != 2)
+            Fx.pop(btnOis)
+            toast(when (next) { 0 -> "OIS: вкл"; 1 -> "OIS: авто (выключается при STAB)"; else -> "OIS: выкл" })
+            if (cfg.stabOisOff != policyBefore) openCamera() else setControls(controls)
         }
         btnOis.setOnLongClickListener { runProbe(); true }
-        findViewById<View>(R.id.modeLabel).setOnLongClickListener {
-            val next = cfg.stabPreviewRot % 4 + 1
-            repo.set("stab.previewRot", next)
-            cfg = repo.load()
-            camera.setPreviewRot(next)
-            Logger.i("App", "Ориентация превью (STAB): вариант $next/4")
-            toast("Поворот превью: $next/4")
-            true
-        }
+        val gd = GestureDetector(this, object : GestureDetector.SimpleOnGestureListener() {
+            override fun onDown(e: android.view.MotionEvent) = true
+            override fun onSingleTapUp(e: android.view.MotionEvent): Boolean { cycleProfile(1); return true }
+            override fun onFling(e1: android.view.MotionEvent?, e2: android.view.MotionEvent, vx: Float, vy: Float): Boolean {
+                if (Math.abs(vx) < Math.abs(vy)) return false
+                cycleProfile(if (vx < 0) 1 else -1); return true
+            }
+            override fun onLongPress(e: android.view.MotionEvent) {
+                val next = cfg.stabPreviewRot % 4 + 1
+                repo.set("stab.previewRot", next)
+                cfg = repo.load()
+                camera.setPreviewRot(next)
+                Logger.i("App", "Ориентация превью (STAB): вариант $next/4")
+                toast("Поворот превью: $next/4")
+            }
+        })
+        modeLabel.setOnTouchListener { v, ev -> gd.onTouchEvent(ev); true }
         btnHdr.setOnClickListener {
             if (camera.isRecording) return@setOnClickListener
-            if (caps?.supportsHlg10 != true) { toast("10-бит HLG на этой камере недоступен"); return@setOnClickListener }
+            if (caps?.supportsHlg10 != true) { toast("10-бит HLG на этой камере недоступен"); Fx.shake(btnHdr); return@setOnClickListener }
             repo.set("video.hdr", if (cfg.hdr) "off" else "hlg10")
             cfg = repo.load()
             toast(if (cfg.hdr) "HLG 10-бит: вкл (нужен STAB; на экранах без HDR картинка блёклая)" else "HLG 10-бит: выкл")
@@ -196,7 +222,7 @@ class MainActivity : Activity(), VideoCamera.Listener {
         }
         btnStab.setOnClickListener {
             if (camera.isRecording) return@setOnClickListener
-            if (caps?.facingBack != true) { toast("Стабилизация по гиро: только основная камера"); return@setOnClickListener }
+            if (caps?.facingBack != true) { toast("Стабилизация по гиро: только основная камера"); Fx.shake(btnStab); return@setOnClickListener }
             controls = controls.copy(stab = !controls.stab)
             repo.set("stab.enabled", controls.stab)
             cfg = repo.load()
@@ -218,7 +244,7 @@ class MainActivity : Activity(), VideoCamera.Listener {
         }
         btnEis.setOnClickListener {
             if (caps?.hasStockEis != true) {
-                toast("Стоковый EIS недоступен")
+                toast("Стоковый EIS недоступен"); Fx.shake(btnEis)
                 return@setOnClickListener
             }
             setControls(controls.copy(stockEis = !controls.stockEis))
@@ -245,7 +271,7 @@ class MainActivity : Activity(), VideoCamera.Listener {
             if (camera.isRecording) return@setOnClickListener
             back = !back
             controls = controls.copy(zoom = 1f, evIndex = 0)
-            btnFlip.animate().rotationBy(180f).setDuration(250).start()
+            Fx.spin(btnFlip, 180f)
             openCamera()
         }
         thumb.setOnClickListener {
@@ -387,6 +413,7 @@ class MainActivity : Activity(), VideoCamera.Listener {
     }
 
     override fun onSessionReady() = runOnUiThread {
+        qualityRetries = 0
         val calib = getSharedPreferences("calib", MODE_PRIVATE)
         if (calib.getBoolean("pending", false)) {
             calib.edit().putBoolean("pending", false).apply()
@@ -396,6 +423,19 @@ class MainActivity : Activity(), VideoCamera.Listener {
         if (!probed && cfg.probeOnStart) {
             probed = true
             runProbe()
+        }
+    }
+
+    override fun onQualityUnsupported() = runOnUiThread {
+        val c = caps ?: return@runOnUiThread
+        val list = c.qualities(cfg.forceAllQualities)
+        val lower = list.filter { it.width * it.height * it.fps < quality.width * quality.height * quality.fps }.maxByOrNull { it.width * it.height * it.fps }
+        if (lower != null && qualityRetries < 4) {
+            qualityRetries++
+            Logger.w("App", "Режим ${quality.label} не запустился, перехожу на ${lower.label}")
+            toast("${quality.label} недоступен на этой камере → ${lower.label}")
+            quality = lower; repo.set("video.quality", lower.id); cfg = repo.load()
+            openCamera()
         }
     }
 
@@ -487,6 +527,15 @@ class MainActivity : Activity(), VideoCamera.Listener {
         val c = caps ?: return
         val simple = cfg.simpleMode
         listOf(btnOis, btnEis, btnHdr, btnEv).forEach { it.visibility = if (simple) View.GONE else View.VISIBLE }
+        // compatibility: only show what this device can actually do
+        if (!simple) {
+            btnEis.visibility = if (c.hasStockEis) View.VISIBLE else View.GONE
+            btnHdr.visibility = if (c.supportsHlg10) View.VISIBLE else View.GONE
+        }
+        btnStab.visibility = if (hasGyro && c.facingBack) View.VISIBLE else View.GONE
+        setTextFade(btnOis, if (oisMode() == 1) "OIS·A" else "OIS")
+        val pname = profiles().firstOrNull { it.id == cfg.profileId }?.name ?: "Авто"
+        Fx.slideText(modeLabel, pname.uppercase(), 1)
         setTextFade(btnStab, if (simple) "Стаб" else "STAB")
         styleToggle(btnOis, controls.ois, true)
         styleToggle(btnEis, controls.stockEis && c.hasStockEis, c.hasStockEis)
@@ -509,6 +558,9 @@ class MainActivity : Activity(), VideoCamera.Listener {
     }
 
     private fun styleToggle(v: TextView, on: Boolean, available: Boolean) {
+        val was = v.getTag(R.id.root) as? Boolean
+        if (was != null && was != on) Fx.pop(v)
+        v.setTag(R.id.root, on)
         val to = getColor(if (on) R.color.accent else R.color.text_dim)
         val from = v.currentTextColor
         if (from != to) ValueAnimator.ofArgb(from, to).apply {
@@ -592,11 +644,31 @@ class MainActivity : Activity(), VideoCamera.Listener {
     private fun loadThumb(uri: Uri) {
         thread {
             val bmp: Bitmap? = runCatching { contentResolver.loadThumbnail(uri, Size(256, 256), null) }.getOrNull()
-            runOnUiThread { bmp?.let { thumb.setImageBitmap(it) } }
+            runOnUiThread { bmp?.let { thumb.setImageBitmap(it); Fx.pop(thumb) } }
         }
     }
 
+    /** 0 = on, 1 = auto (off with STAB), 2 = off. */
+    private fun oisMode(): Int = if (!controls.ois) 2 else if (cfg.stabOisOff) 1 else 0
+
+    private fun profiles() = QuickProfiles.all(runCatching { ModuleManager(this).presets() }.getOrDefault(emptyList()))
+
+    /** Tap / swipe on the bottom label: next or previous shooting profile. */
+    private fun cycleProfile(dir: Int) {
+        if (camera.isRecording) return
+        val list = profiles()
+        val idx = list.indexOfFirst { it.id == cfg.profileId }.let { if (it < 0) 0 else it }
+        val next = list[(idx + dir + list.size) % list.size]
+        QuickProfiles.apply(repo, next)
+        cfg = repo.load()
+        Fx.slideText(modeLabel, next.name.uppercase(), dir)
+        toast("Профиль: ${next.name}")
+        applyLut()
+        openCamera()
+    }
+
     private fun showQuickMenu() {
+        Fx.spin(btnSettings, 90f)
         fun cycle(levels: List<Presets.Level>) {
             val next = (Presets.indexOf(levels, repo.effectiveJson()) + 1) % levels.size
             Presets.apply(repo, levels[next])
@@ -636,7 +708,7 @@ class MainActivity : Activity(), VideoCamera.Listener {
             QuickMenu.Item("Все настройки  ›", { "" }, { startActivity(Intent(this, SettingsActivity::class.java)) }, closeOnTap = true, accent = true),
         )
         needReopen = false
-        quickMenu.show(btnSettings, items) { if (needReopen) { needReopen = false; openCamera() } }
+        quickMenu.show(btnSettings, items) { Fx.spin(btnSettings, -90f); if (needReopen) { needReopen = false; openCamera() } }
     }
 
     private fun selectLut(id: String) {
@@ -653,7 +725,7 @@ class MainActivity : Activity(), VideoCamera.Listener {
             val l = Luts.resolve(this, cfg.lutId)
             camera.setLut(l, cfg.lutStrength)
             runOnUiThread {
-                setTextFade(btnLut, if (cfg.lutId.isEmpty()) "LUT" else lutTitle(cfg.lutId).take(10))
+                setTextFade(btnLut, if (cfg.lutId.isEmpty()) "LUT" else lutTitle(cfg.lutId).take(10)); Fx.pop(btnLut)
                 btnLut.setTextColor(getColor(if (cfg.lutId.isEmpty()) R.color.text else R.color.accent))
             }
         }

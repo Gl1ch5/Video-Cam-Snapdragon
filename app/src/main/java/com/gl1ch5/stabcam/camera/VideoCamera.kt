@@ -48,6 +48,7 @@ class VideoCamera(private val ctx: Context, private val listener: Listener) {
     interface Listener {
         fun onError(message: String)
         fun onSessionReady()
+        fun onQualityUnsupported() {}
         fun onRecordingStarted()
         fun onRecordingStopped(uri: Uri?)
     }
@@ -216,6 +217,7 @@ class VideoCamera(private val ctx: Context, private val listener: Listener) {
                 override fun onConfigureFailed(s: CameraCaptureSession) {
                     Logger.e(TAG, "Сессия не настроилась: ${quality.label}, запись=$withRecorder")
                     listener.onError("Камера не поддерживает ${quality.label} в этой конфигурации")
+                    if (!withRecorder) listener.onQualityUnsupported()
                     if (withRecorder) {
                         cleanupRecorder(deleteFile = true)
                         createSession(withRecorder = false)

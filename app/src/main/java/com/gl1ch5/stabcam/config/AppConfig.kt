@@ -77,6 +77,7 @@ class AppConfig(val json: JSONObject) {
     val postBitrateFactor: Double = json.optJSONObject("post")?.optDouble("bitrateFactor", 1.5) ?: 1.5
     val postExportGcsv: Boolean = json.optJSONObject("post")?.optBoolean("exportGcsv", true) ?: true
 
+    val profileId: String = ui.optString("profile", "auto")
     val simpleMode: Boolean = ui.optString("mode", "pro") == "simple"
 
     val showInfo: Boolean = ui.optBoolean("showInfo", false)

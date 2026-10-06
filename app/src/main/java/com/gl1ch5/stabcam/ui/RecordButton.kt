@@ -22,11 +22,19 @@ class RecordButton @JvmOverloads constructor(ctx: Context, attrs: AttributeSet? 
     /** 0 = idle (circle), 1 = recording (square). */
     private var progress = 0f
     private var animator: ValueAnimator? = null
+    private var pulser: ValueAnimator? = null
+    private var pulseP = 0f
 
     var recording = false
         set(value) {
             if (field == value) return
             field = value
+            pulser?.cancel(); pulseP = 0f
+            if (value) pulser = ValueAnimator.ofFloat(0f, 1f).apply {
+                duration = 700; repeatMode = ValueAnimator.REVERSE; repeatCount = ValueAnimator.INFINITE
+                addUpdateListener { pulseP = it.animatedValue as Float; invalidate() }
+                start()
+            }
             animator?.cancel()
             animator = ValueAnimator.ofFloat(progress, if (value) 1f else 0f).apply {
                 duration = 220
@@ -47,6 +55,8 @@ class RecordButton @JvmOverloads constructor(ctx: Context, attrs: AttributeSet? 
         val r = min(width, height) / 2f
         val stroke = r * 0.09f
         ring.strokeWidth = stroke
+        ring.alpha = (255 * (1f - 0.45f * pulseP)).toInt()
+        fill.alpha = (255 * (1f - 0.25f * pulseP)).toInt()
         canvas.drawCircle(cx, cy, r - stroke / 2, ring)
 
         val idleR = r - stroke * 2.1f

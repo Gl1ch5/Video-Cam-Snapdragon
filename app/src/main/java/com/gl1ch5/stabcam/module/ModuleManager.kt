@@ -185,7 +185,7 @@ class ModuleManager(private val ctx: Context) {
             "stab.enabled", "stab.crop", "stab.minCrop", "stab.maxAngleDeg", "stab.tauMaxMs", "stab.tauMinMs", "stab.velTauMs",
             "stab.sharpen", "stab.bicubic", "stab.denoise", "stab.denoiseSigma", "stab.timeOffsetMs",
             "camera.ois", "camera.stockEis", "camera.noiseReduction", "camera.edge", "camera.distortionCorrection", "camera.forceAllQualities",
-            "ui.showInfo", "ui.mode", "post.enabled", "post.bitrateFactor", "post.exportGcsv",
+            "ui.showInfo", "ui.mode", "ui.profile", "post.enabled", "post.bitrateFactor", "post.exportGcsv",
         )
 
         val LABELS = mapOf(

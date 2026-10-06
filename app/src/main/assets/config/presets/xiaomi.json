@@ -1,0 +1,27 @@
+{
+  "name": "Xiaomi / Redmi / POCO",
+  "description": "Консервативный профиль: только объявленные режимы, HEVC, умеренные шумодав и резкость. Не проверялся на устройстве.",
+  "priority": 15,
+  "match": {
+    "manufacturer": [
+      "Xiaomi",
+      "Redmi",
+      "POCO"
+    ]
+  },
+  "config": {
+    "camera": {
+      "ois": true,
+      "stockEis": false,
+      "forceAllQualities": false,
+      "noiseReduction": "fast"
+    },
+    "video": {
+      "codec": "hevc"
+    },
+    "stab": {
+      "denoise": 0.45,
+      "sharpen": 0.3
+    }
+  }
+}

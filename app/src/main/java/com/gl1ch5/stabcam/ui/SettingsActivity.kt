@@ -457,6 +457,8 @@ class SettingsActivity : Activity() {
                 }
             }
         }
+        section("Совместимость")
+        mono(compatReport())
         section("Диагностика")
         toggle("Проверка стабилизации при запуске", "Показывает, что камера приняла (OIS, EIS, vendor-ключи).", repo.load().probeOnStart) { repo.set("diagnostics.probeOnStart", it) }
         action("Лог", "Живая лента, копирование, отправка", "Открыть") { startActivity(Intent(this, LogActivity::class.java)) }
@@ -471,6 +473,28 @@ class SettingsActivity : Activity() {
         val p = repo.activePreset
         body(p?.let { "${it.name}\n${it.description}" } ?: "Пресет не найден — значения по умолчанию")
         note(ConfigRepository.deviceProps().entries.joinToString("\n") { "${it.key}: ${it.value}" })
+    }
+
+    /** What this device can do and which StabCam features are therefore on or off. */
+    private fun compatReport(): String {
+        val c = CameraCaps.find(this, true)
+        val sm = getSystemService(android.hardware.SensorManager::class.java)
+        val gyro = sm.getDefaultSensor(android.hardware.Sensor.TYPE_GYROSCOPE)
+        val grav = sm.getDefaultSensor(android.hardware.Sensor.TYPE_GRAVITY)
+        fun yn(b: Boolean) = if (b) "✓" else "✗"
+        val l = ArrayList<String>()
+        l += "${yn(gyro != null)} Гироскоп" + (gyro?.let { "  (до ${if (it.minDelay > 0) (1e6 / it.minDelay).toInt() else 0} Гц)" } ?: "  — STAB и ПОСТ недоступны")
+        l += "${yn(grav != null)} Датчик гравитации" + if (grav == null) "  — горизонт недоступен" else ""
+        if (c == null) { l += "✗ Основная камера не найдена"; return l.joinToString("\n") }
+        l += "${yn(c.supportedQualities.any { it.fps >= 60 && it.width >= 3840 })} 4K60 объявлен Camera2" + if (c.supportedQualities.none { it.fps >= 60 && it.width >= 3840 }) "  (режим можно включить принудительно: пресет устройства)" else ""
+        l += "${yn(c.qualities(false).any { it.highSpeed })} 4K120 / high-speed"
+        l += "${yn(c.supportsHlg10)} HLG 10-бит" + if (!c.supportsHlg10) "  — кнопка HLG скрыта" else ""
+        l += "${yn(c.hasOis)} OIS объявлен Camera2" + if (!c.hasOis) "  (прошивка может его скрывать; запрос всё равно отправляется)" else ""
+        l += "${yn(c.hasStockEis)} Стоковый EIS" + if (!c.hasStockEis) "  — кнопка EIS скрыта" else ""
+        l += "${yn(c.chars.get(android.hardware.camera2.CameraCharacteristics.SENSOR_INFO_TIMESTAMP_SOURCE) == android.hardware.camera2.CameraMetadata.SENSOR_INFO_TIMESTAMP_SOURCE_REALTIME)} Часы кадров и гироскопа совпадают (REALTIME)" +
+            if (c.chars.get(android.hardware.camera2.CameraCharacteristics.SENSOR_INFO_TIMESTAMP_SOURCE) != android.hardware.camera2.CameraMetadata.SENSOR_INFO_TIMESTAMP_SOURCE_REALTIME) "  — стабилизация будет неточной" else ""
+        l += "Профиль: ${repo.activePreset?.name ?: "общий (без пресета)"}"
+        return l.joinToString("\n")
     }
 
     private fun advanced(e: JSONObject) {

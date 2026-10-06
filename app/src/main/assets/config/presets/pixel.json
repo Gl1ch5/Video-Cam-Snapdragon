@@ -1,0 +1,25 @@
+{
+  "name": "Google Pixel",
+  "description": "Консервативный профиль: свой сильный ISP камеры, поэтому лёгкое шумоподавление и без принудительных режимов. Не проверялся на устройстве.",
+  "priority": 15,
+  "match": {
+    "manufacturer": [
+      "Google"
+    ]
+  },
+  "config": {
+    "camera": {
+      "ois": true,
+      "stockEis": false,
+      "forceAllQualities": false,
+      "noiseReduction": "fast"
+    },
+    "video": {
+      "codec": "hevc"
+    },
+    "stab": {
+      "denoise": 0.35,
+      "sharpen": 0.25
+    }
+  }
+}
