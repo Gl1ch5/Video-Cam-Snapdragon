@@ -34,6 +34,9 @@ class StabPipeline(
     /** Temporal denoise strength 0..1 (0 = off) and noise tolerance (luma difference treated as noise). */
     private val denoise: Float = 0.5f,
     private val denoiseSigma: Float = 0.04f,
+    /** Nominal capture rate and a thermal-status probe, for the cadence diagnostics in the log. */
+    private val fps: Int = 60,
+    private val thermal: () -> Int = { -1 },
     /** Shifts gyro lookup relative to frame timestamps (ms); fixes residual micro-jitter from clock offset. */
     timeOffsetMs: Double = 0.0,
     /** 10-bit HLG output (RGB10_A2 surfaces); falls back to 8-bit if EGL cannot do it. */
@@ -106,6 +109,11 @@ class StabPipeline(
     private var statRenderNs = 0L
     private var statCorr = 0.0
     private var statMaxCorr = 0.0
+    private var lastTs = 0L
+    private var statDrops = 0
+    private var statMaxDt = 0L
+    private var statDtSum = 0L
+    private var statDtN = 0
 
     init {
         val latch = CountDownLatch(1)
@@ -264,6 +272,13 @@ class StabPipeline(
             Logger.w(TAG, "updateTexImage", e); return
         }
         val ts = st.timestamp
+        if (lastTs != 0L) {
+            val dtf = ts - lastTs
+            statDtSum += dtf; statDtN++
+            if (dtf > statMaxDt) statMaxDt = dtf
+            if (dtf > 1_500_000_000L / fps) statDrops++ // a frame (or more) missing
+        }
+        lastTs = ts
         st.getTransformMatrix(stm)
         frames++
 
@@ -314,10 +329,13 @@ class StabPipeline(
         val now = System.nanoTime()
         if (statT == 0L) statT = now
         if (now - statT > 2_000_000_000L) {
-            Logger.i(TAG, "%.1f fps, кадр %.1f мс, поправка ср %.2f° макс %.2f°, гиро %s, стаб %s".format(
-                statN * 1e9 / (now - statT), statRenderNs / statN / 1e6, statCorr / statN, statMaxCorr,
-                if (gyro.latestTimeNs() - ts > -50_000_000L) "ok" else "ОТСТАЁТ", if (enabled) "вкл" else "выкл"))
+            Logger.i(TAG, "%.1f fps, кадр %.1f мс, интервал ср %.1f макс %.1f мс (норма %.1f), пропусков %d, поправка ср %.2f° макс %.2f° кроп %.3f, гиро %s, тепло %d, стаб %s".format(
+                statN * 1e9 / (now - statT), statRenderNs / statN / 1e6,
+                if (statDtN > 0) statDtSum / statDtN / 1e6 else 0.0, statMaxDt / 1e6, 1000.0 / fps, statDrops,
+                statCorr / statN, statMaxCorr, stabilizer.crop,
+                if (gyro.latestTimeNs() - ts > -50_000_000L) "ok" else "ОТСТАЁТ", thermal(), if (enabled) "вкл" else "выкл"))
             statT = now; statN = 0; statRenderNs = 0; statCorr = 0.0; statMaxCorr = 0.0
+            statDrops = 0; statMaxDt = 0; statDtSum = 0; statDtN = 0
         }
     }
 

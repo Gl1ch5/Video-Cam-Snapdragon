@@ -35,7 +35,8 @@
   "update": {
     "auto": true,
     "repo": "Gl1ch5/Video-Cam-Snapdragon",
-    "tag": "nightly"
+    "tag": "nightly",
+    "silent": false
   },
   "diagnostics": {
     "probeOnStart": true

@@ -47,6 +47,7 @@ class AppConfig(val json: JSONObject) {
     val lutStrength: Float = video.optDouble("lutStrength", 1.0).toFloat()
     val hdr: Boolean = video.optString("hdr", "off") == "hlg10"
     val stabTimeOffsetMs: Double = stab.optDouble("timeOffsetMs", 0.0)
+    val updateSilent: Boolean = update.optBoolean("silent", false)
     val updateAuto: Boolean = update.optBoolean("auto", true)
     val updateRepo: String = update.optString("repo", "Gl1ch5/Video-Cam-Snapdragon")
     val updateTag: String = update.optString("tag", "nightly")

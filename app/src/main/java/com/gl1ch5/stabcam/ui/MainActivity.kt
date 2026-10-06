@@ -93,7 +93,6 @@ class MainActivity : Activity(), VideoCamera.Listener {
     private var prevZoom = 1f
     private lateinit var shutterFlash: View
     private var probed = false
-    private var updateChecked = false
 
     private lateinit var orientationListener: OrientationEventListener
 
@@ -280,6 +279,7 @@ class MainActivity : Activity(), VideoCamera.Listener {
             openCamera()
         }
         refreshThumb()
+        maybeCheckUpdate()
     }
 
     override fun onPause() {
@@ -373,10 +373,6 @@ class MainActivity : Activity(), VideoCamera.Listener {
         if (!probed && cfg.probeOnStart) {
             probed = true
             runProbe()
-        }
-        if (!updateChecked && cfg.updateAuto) {
-            updateChecked = true
-            checkUpdate(manual = false)
         }
     }
 
@@ -684,19 +680,33 @@ class MainActivity : Activity(), VideoCamera.Listener {
         if (hideAfter > 0) main.postDelayed({ if (diagText == text) { diagText = null; updateUi() } }, hideAfter)
     }
 
+    /** Every return to the app (at most once per 10 minutes), independent of the camera session. */
+    private fun maybeCheckUpdate() {
+        if (!cfg.updateAuto) return
+        val prefs = getSharedPreferences("upd", MODE_PRIVATE)
+        if (System.currentTimeMillis() - prefs.getLong("last_check", 0) < 10 * 60_000L) return
+        checkUpdate(manual = false)
+    }
+
     private fun checkUpdate(manual: Boolean) {
         val u = Updater(this, cfg.updateRepo, cfg.updateTag)
         val prefs = getSharedPreferences("upd", MODE_PRIVATE)
         thread {
             val r = u.fetchLatest()
             when {
-                r == null -> if (manual) runOnUiThread { toast("Не удалось проверить обновление (см. лог)") }
+                r == null -> { Logger.w(Updater.TAG, "Проверка обновления: ${u.lastStatus}"); if (manual) runOnUiThread { toast("Не удалось проверить обновление: ${u.lastStatus}") } }
                 !u.isNewer(r) -> {
-                    Logger.i(Updater.TAG, "Версия актуальна (${u.currentId()})")
+                    Logger.i(Updater.TAG, "Версия актуальна (${u.currentId()}), ${u.lastStatus}")
                     if (manual) runOnUiThread { toast("Установлена последняя версия") }
                 }
                 else -> {
                     Logger.i(Updater.TAG, "Найдена новая версия ${r.id} (сейчас ${u.currentId()})")
+                    if (cfg.updateSilent && u.canInstall() && !manual) {
+                        runOnUiThread { showDiag("Обновление ${r.id}: загрузка…") }
+                        val f = u.download(r) { p -> runOnUiThread { showDiag("Обновление ${r.id}: $p%") } }
+                        if (f != null) { runOnUiThread { showDiag("Устанавливаю ${r.id}…", 8000) }; runCatching { u.install(f) }.onFailure { Logger.e(Updater.TAG, "Установка", it) } }
+                        return@thread
+                    }
                     // "Позже" is remembered per version so the card does not nag on every launch
                     if (!manual && prefs.getString("skip", "") == r.id) return@thread
                     runOnUiThread {

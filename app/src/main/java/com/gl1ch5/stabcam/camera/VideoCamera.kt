@@ -391,6 +391,11 @@ class VideoCamera(private val ctx: Context, private val listener: Listener) {
                     "float" -> b.set(CaptureRequest.Key(t.name, Float::class.javaObjectType), (t.value as Number).toFloat())
                     "boolean" -> b.set(CaptureRequest.Key(t.name, Boolean::class.javaObjectType), t.value as Boolean)
                     "byte" -> b.set(CaptureRequest.Key(t.name, Byte::class.javaObjectType), (t.value as Number).toByte())
+                    "string" -> b.set(CaptureRequest.Key(t.name, ByteArray::class.java), (t.value.toString() + "\u0000").toByteArray(Charsets.UTF_8))
+                    "ints" -> {
+                        val a = t.value as org.json.JSONArray
+                        b.set(CaptureRequest.Key(t.name, IntArray::class.java), IntArray(a.length()) { a.getInt(it) })
+                    }
                     else -> Logger.w(TAG, "Unknown vendor tag type ${t.type}")
                 }
             }.onFailure { Logger.w(TAG, "Vendor tag ${t.name} rejected", it) }
@@ -475,7 +480,7 @@ class VideoCamera(private val ctx: Context, private val listener: Listener) {
         fun make(h: Boolean) = StabPipeline(
             g, quality.width, quality.height, k,
             Stabilizer.Params(cfg.stabMaxAngle, cfg.stabTauMax, cfg.stabTauMin, cfg.stabVelTau, tanHalfFov = (quality.width / 2.0) / k[0], minCrop = cfg.stabMinCrop.toDouble(), maxCrop = cfg.stabCrop.toDouble(), intr = FrameFit.Intr(k[0].toDouble(), k[1].toDouble(), k[2].toDouble(), k[3].toDouble(), quality.width.toDouble(), quality.height.toDouble()), horizonDeg = cfg.stabHorizonDeg), cfg.stabCrop, readout,
-            cfg.stabSharpen, cfg.stabBicubic, cfg.stabDenoise, cfg.stabDenoiseSigma, cfg.stabTimeOffsetMs, h,
+            cfg.stabSharpen, cfg.stabBicubic, cfg.stabDenoise, cfg.stabDenoiseSigma, quality.fps, { runCatching { ctx.getSystemService(android.os.PowerManager::class.java).currentThermalStatus }.getOrDefault(-1) }, cfg.stabTimeOffsetMs, h,
         )
         val p = try { make(hdr) } catch (e: Exception) {
             Logger.e(TAG, "Конвейер ${if (hdr) "10-бит" else ""} не запустился", e)

@@ -433,8 +433,12 @@ class SettingsActivity : Activity() {
     private fun system() {
         modeChoice()
         section("Обновления")
-        val updStatus = note("Автопроверка при запуске: ${if (repo.load().updateAuto) "вкл" else "выкл"}")
-        toggle("Автообновление", null, repo.load().updateAuto) { repo.set("update.auto", it) }
+        val up = getSharedPreferences("upd", MODE_PRIVATE)
+        val lastMs = up.getLong("last_check", 0)
+        val updStatus = note("Автопроверка: ${if (repo.load().updateAuto) "вкл" else "выкл"}. Последняя проверка: " +
+            (if (lastMs == 0L) "ещё не было" else java.text.SimpleDateFormat("dd.MM HH:mm", java.util.Locale.getDefault()).format(java.util.Date(lastMs)) + " — " + up.getString("last_status", "")))
+        toggle("Автообновление", "Проверять при каждом входе в приложение.", repo.load().updateAuto) { repo.set("update.auto", it) }
+        toggle("Устанавливать без вопросов", "Без окна: скачать и установить самому (нужно разрешение на установку).", repo.load().updateSilent) { repo.set("update.silent", it) }
         action("Проверить обновление", null, "Проверить") {
             val cfg = repo.load()
             val u = Updater(this, cfg.updateRepo, cfg.updateTag)
@@ -443,7 +447,7 @@ class SettingsActivity : Activity() {
                 val r = u.fetchLatest()
                 runOnUiThread {
                     updStatus.text = when {
-                        r == null -> "Не удалось проверить (репозиторий приватный или нет сети) — см. лог"
+                        r == null -> "Не удалось проверить: ${u.lastStatus}"
                         !u.isNewer(r) -> "Установлена последняя версия (${u.currentId()})"
                         else -> "Доступна ${r.id}"
                     }
@@ -511,18 +515,26 @@ class SettingsActivity : Activity() {
 
         section("Лаборатория vendor-ключей")
         note("Ключи OnePlus/Qualcomm из отчёта камеры. Задайте ключ и число, затем откройте камеру и проверьте.")
+        var tagType = "int"
         val keyEdit = EditText(this).apply { setText("com.oplus.video.stabilization.mode"); typeface = Typeface.MONOSPACE; setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f); setTextColor(Color.WHITE) }
         val valEdit = EditText(this).apply { setText("1"); hint = "значение"; inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_SIGNED; setTextColor(Color.WHITE) }
         content.addView(keyEdit, matchWrap()); content.addView(valEdit, matchWrap())
+        choice("Тип значения", listOf("число", "строка", "массив чисел"), 0) { tagType = listOf("int", "string", "ints")[it]; valEdit.hint = when (tagType) { "string" -> "например com.oplus.camera"; "ints" -> "числа через запятую"; else -> "значение" }
+            valEdit.inputType = if (tagType == "int") InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_SIGNED else InputType.TYPE_CLASS_TEXT }
         row(
             button("Применить") {
-                val v = valEdit.text.toString().toIntOrNull() ?: return@button toast("Нужно число")
+                val raw = valEdit.text.toString().trim()
+                val v: Any = when (tagType) {
+                    "string" -> raw
+                    "ints" -> JSONArray(raw.split(',', ' ').filter { it.isNotBlank() }.map { it.trim().toIntOrNull() ?: return@button toast("Нужны целые числа") })
+                    else -> raw.toIntOrNull() ?: return@button toast("Нужно число")
+                }
                 val root = repo.userOverrides()
                 val cam = root.optJSONObject("camera") ?: JSONObject().also { root.put("camera", it) }
                 val old = cam.optJSONArray("vendorTags") ?: JSONArray()
                 val list = JSONArray()
                 for (i in 0 until old.length()) if (old.getJSONObject(i).optString("name") != keyEdit.text.toString()) list.put(old.getJSONObject(i))
-                list.put(JSONObject().put("name", keyEdit.text.toString().trim()).put("type", "int").put("value", v))
+                list.put(JSONObject().put("name", keyEdit.text.toString().trim()).put("type", tagType).put("value", v))
                 cam.put("vendorTags", list)
                 repo.saveUserOverrides(root); toast("Ключ задан, откройте камеру"); show(tab)
             },
