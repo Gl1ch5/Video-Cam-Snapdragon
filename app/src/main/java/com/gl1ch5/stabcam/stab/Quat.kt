@@ -18,6 +18,12 @@ class Quat(val w: Double, val x: Double, val y: Double, val z: Double) {
 
     fun conj() = Quat(w, -x, -y, -z)
 
+    /** Rotates vector [v] by this quaternion. */
+    fun rotate(v: DoubleArray): DoubleArray {
+        val m = toMatrix()
+        return doubleArrayOf(m[0] * v[0] + m[1] * v[1] + m[2] * v[2], m[3] * v[0] + m[4] * v[1] + m[5] * v[2], m[6] * v[0] + m[7] * v[1] + m[8] * v[2])
+    }
+
     fun normalized(): Quat {
         val n = sqrt(w * w + x * x + y * y + z * z)
         return if (n < 1e-12) IDENTITY else Quat(w / n, x / n, y / n, z / n)

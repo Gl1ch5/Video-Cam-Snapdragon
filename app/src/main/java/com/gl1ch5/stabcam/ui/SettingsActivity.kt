@@ -410,6 +410,8 @@ class SettingsActivity : Activity() {
         section("Стабилизация")
         toggle("Гиро-стабилизация", "Своя стабилизация по гироскопу (кнопка STAB).", bool(e, "stab.enabled", true)) { repo.set("stab.enabled", it) }
         choice("Сила", Presets.strength.map { it.label }, Presets.indexOf(Presets.strength, e)) { Presets.apply(repo, Presets.strength[it]) }
+        choice("Горизонт", Presets.horizon.map { it.label }, Presets.indexOf(Presets.horizon, e)) { Presets.apply(repo, Presets.horizon[it]) }
+        note("Горизонт выравнивает крен по гравитации (в живом режиме ограничен запасом кропа, полный диапазон работает при обработке ПОСТ).")
         toggle("Аппаратный OIS", "Оптическая стабилизация камеры.", bool(e, "camera.ois", true)) { repo.set("camera.ois", it) }
         toggle("Стоковый EIS", "Обрезает и мылит кадр; при STAB отключается.", bool(e, "camera.stockEis", false)) { repo.set("camera.stockEis", it) }
         section("Качество картинки")

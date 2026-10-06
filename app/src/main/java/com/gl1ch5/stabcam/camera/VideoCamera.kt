@@ -22,6 +22,7 @@ import android.hardware.camera2.CaptureResult
 import android.hardware.camera2.TotalCaptureResult
 import com.gl1ch5.stabcam.util.Logger
 import com.gl1ch5.stabcam.lut.Lut
+import com.gl1ch5.stabcam.stab.FrameFit
 import com.gl1ch5.stabcam.stab.GyroLog
 import com.gl1ch5.stabcam.stab.GyroTracker
 import com.gl1ch5.stabcam.stab.Mp4Tagger
@@ -473,7 +474,7 @@ class VideoCamera(private val ctx: Context, private val listener: Listener) {
         Logger.i(TAG, "Стабилизация: K=[${k.joinToString { "%.1f".format(it) }}] readout=${readout / 1000}мкс crop=${cfg.stabCrop} макс=${cfg.stabMaxAngle}° сдвиг гиро=${cfg.stabTimeOffsetMs}мс HLG=$hdr")
         fun make(h: Boolean) = StabPipeline(
             g, quality.width, quality.height, k,
-            Stabilizer.Params(cfg.stabMaxAngle, cfg.stabTauMax, cfg.stabTauMin, cfg.stabVelTau, tanHalfFov = (quality.width / 2.0) / k[0], minCrop = cfg.stabMinCrop.toDouble(), maxCrop = cfg.stabCrop.toDouble()), cfg.stabCrop, readout,
+            Stabilizer.Params(cfg.stabMaxAngle, cfg.stabTauMax, cfg.stabTauMin, cfg.stabVelTau, tanHalfFov = (quality.width / 2.0) / k[0], minCrop = cfg.stabMinCrop.toDouble(), maxCrop = cfg.stabCrop.toDouble(), intr = FrameFit.Intr(k[0].toDouble(), k[1].toDouble(), k[2].toDouble(), k[3].toDouble(), quality.width.toDouble(), quality.height.toDouble()), horizonDeg = cfg.stabHorizonDeg), cfg.stabCrop, readout,
             cfg.stabSharpen, cfg.stabBicubic, cfg.stabDenoise, cfg.stabDenoiseSigma, cfg.stabTimeOffsetMs, h,
         )
         val p = try { make(hdr) } catch (e: Exception) {
@@ -547,6 +548,11 @@ class VideoCamera(private val ctx: Context, private val listener: Listener) {
             val dir = java.io.File(ctx.filesDir, "post").apply { mkdirs() }
             val gc = GyroLog.gcsv(base, t, w, n, base - 400_000_000L, ft[fn - 1] + 400_000_000L, note = "StabCam ${com.gl1ch5.stabcam.BuildConfig.VERSION_NAME} ${android.os.Build.MODEL}")
             java.io.File(dir, "$nameBase.gcsv").writeText(gc)
+            val (gt, gv, gn) = g.stopGravityLog()
+            if (gn > 0) java.io.File(dir, "$nameBase.grav.csv").writeText(buildString {
+                append("t_ms,gx,gy,gz\n")
+                for (i in 0 until gn) append(String.format(java.util.Locale.US, "%.3f,%.5f,%.5f,%.5f\n", (gt[i] - base) / 1e6, gv[i * 3], gv[i * 3 + 1], gv[i * 3 + 2]))
+            })
             val frames = org.json.JSONArray()
             for (i in 0 until fn) frames.put(org.json.JSONArray().put(ft[i] - base).put(fe[i]))
             val k = c.intrinsicsFor(q.width, q.height)

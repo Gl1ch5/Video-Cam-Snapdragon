@@ -115,12 +115,13 @@ class PostActivity : Activity() {
             val cfg = repo.load()
             val q = Quality.entries.firstOrNull { it.width == meta.width && it.height == meta.height && it.fps == meta.fps }
             val opt = OfflineProcessor.Options(
-                sigmaSec = sigma, maxAngleDeg = cfg.stabMaxAngle + 2, minCrop = cfg.stabMinCrop.toDouble(), maxCrop = (cfg.stabCrop + 0.04).toDouble(),
+                sigmaSec = sigma, maxAngleDeg = cfg.stabMaxAngle + 2, minCrop = cfg.stabMinCrop.toDouble(), maxCrop = (cfg.stabCrop + 0.10).toDouble(),
                 denoise = if (cfg.stabDenoise > 0f) minOf(1f, cfg.stabDenoise + 0.15f) else 0f, denoiseSigma = cfg.stabDenoiseSigma,
                 sharpen = cfg.stabSharpen, bicubic = cfg.stabBicubic,
                 lut = Luts.resolve(this, cfg.lutId), lutStrength = cfg.lutStrength,
                 bitrate = if (q != null) cfg.bitrateFor(q) else 50_000_000, hevc = cfg.codec.equals("hevc", true),
                 timeOffsetMs = cfg.stabTimeOffsetMs, gyroAxes = cfg.gyroAxes,
+                horizonDeg = cfg.stabHorizonDeg, gravCsv = File(f.parentFile, f.name.removeSuffix(".meta.json") + ".grav.csv").takeIf { it.exists() }?.readText(),
             )
             val gcsv = File(f.parentFile, f.name.removeSuffix(".meta.json") + ".gcsv").takeIf { it.exists() }?.readText()
             val p = OfflineProcessor(this, meta, gcsv ?: "", opt) { frac, text ->

@@ -53,12 +53,13 @@ class AppConfig(val json: JSONObject) {
     val probeOnStart: Boolean = diag.optBoolean("probeOnStart", true)
 
     val stabEnabled: Boolean = stab.optBoolean("enabled", true)
-    val stabCrop: Float = stab.optDouble("crop", 1.12).toFloat()
+    val stabCrop: Float = stab.optDouble("crop", 1.15).toFloat()
     val stabMaxAngle: Double = stab.optDouble("maxAngleDeg", 6.0)
     val stabTauMax: Double = stab.optDouble("tauMaxMs", 500.0) / 1000
     val stabTauMin: Double = stab.optDouble("tauMinMs", 40.0) / 1000
     val stabVelTau: Double = stab.optDouble("velTauMs", 300.0) / 1000
     val stabMinCrop: Float = stab.optDouble("minCrop", 1.03).toFloat()
+    val stabHorizonDeg: Double = stab.optDouble("horizonDeg", 0.0)
     val stabSharpen: Float = stab.optDouble("sharpen", 0.35).toFloat()
     val stabPreviewRot: Int = stab.optInt("previewRot", 1).coerceIn(1, 4)
     val stabDenoise: Float = stab.optDouble("denoise", 0.5).toFloat()

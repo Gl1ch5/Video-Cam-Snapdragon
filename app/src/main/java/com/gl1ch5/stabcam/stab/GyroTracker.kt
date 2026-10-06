@@ -45,6 +45,7 @@ class GyroTracker(private val ctx: Context, axes: List<String>) : SensorEventLis
     /** Starts the full log, pre-seeded with the last ~0.4 s so the clip start is covered. */
     @Synchronized fun startLog() {
         logT = LongArray(1 shl 14); logW = FloatArray((1 shl 14) * 3); logN = 0
+        gLogT = LongArray(1 shl 12); gLogV = FloatArray((1 shl 12) * 3); gLogN = 0
         val have = minOf(rawCount, rawN.toLong(), 200L)
         for (k in have downTo 1) append(((rawCount - k) % rawN).toInt())
         logging = true
@@ -71,6 +72,7 @@ class GyroTracker(private val ctx: Context, axes: List<String>) : SensorEventLis
         }
         thread.start()
         started = System.nanoTime()
+        sm.getDefaultSensor(Sensor.TYPE_GRAVITY)?.let { sm.registerListener(this, it, 20_000, 0, Handler(thread.looper)) }
         val ok = sm.registerListener(this, gyro, 2500, 0, Handler(thread.looper))
         Logger.i(TAG, "Гироскоп ${gyro.name}: макс. частота ${if (gyro.minDelay > 0) 1e6 / gyro.minDelay else 0.0} Гц, запрос 400 Гц, ok=$ok, оси=${map.joinToString { (if (it.sign < 0) "-" else "") + "xyz"[it.index] }}")
         return ok
@@ -85,7 +87,33 @@ class GyroTracker(private val ctx: Context, axes: List<String>) : SensorEventLis
 
     override fun onAccuracyChanged(s: Sensor?, a: Int) {}
 
+    // gravity ("up" in the device frame) — latest value plus a log while recording
+    @Volatile private var upDev = doubleArrayOf(0.0, 0.0, 0.0)
+    private var gLogT = LongArray(0)
+    private var gLogV = FloatArray(0)
+    private var gLogN = 0
+
+    /** Up direction in the camera-image frame (axis-mapped like the gyro), or null if unknown. */
+    fun upImg(): DoubleArray? {
+        val u = upDev
+        val n = Math.sqrt(u[0] * u[0] + u[1] * u[1] + u[2] * u[2])
+        if (n < 1e-6) return null
+        return doubleArrayOf(map[0].sign * u[map[0].index] / n, map[1].sign * u[map[1].index] / n, map[2].sign * u[map[2].index] / n)
+    }
+
+    @Synchronized fun stopGravityLog(): Triple<LongArray, FloatArray, Int> = Triple(gLogT, gLogV, gLogN)
+
     override fun onSensorChanged(e: SensorEvent) {
+        if (e.sensor.type == Sensor.TYPE_GRAVITY) {
+            upDev = doubleArrayOf(e.values[0].toDouble(), e.values[1].toDouble(), e.values[2].toDouble())
+            synchronized(this) {
+                if (logging) {
+                    if (gLogN == gLogT.size) { gLogT = gLogT.copyOf(maxOf(256, gLogN * 2)); gLogV = gLogV.copyOf(maxOf(768, gLogN * 6)) }
+                    gLogT[gLogN] = e.timestamp; gLogV[gLogN * 3] = e.values[0]; gLogV[gLogN * 3 + 1] = e.values[1]; gLogV[gLogN * 3 + 2] = e.values[2]; gLogN++
+                }
+            }
+            return
+        }
         val w = DoubleArray(3) { i -> map[i].sign * e.values[map[i].index] }
         synchronized(this) {
             if (lastT != 0L) {

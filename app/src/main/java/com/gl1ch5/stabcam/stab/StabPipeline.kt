@@ -123,6 +123,7 @@ class StabPipeline(
     fun setZoom(z: Float) {
         if (z != zoom) hasHist = false
         zoom = z
+        stabilizer.intr = FrameFit.Intr(k[0].toDouble(), k[1].toDouble(), k[2].toDouble(), k[3].toDouble(), width.toDouble(), height.toDouble()).scaled(z.toDouble())
         // Intrinsics are known for the main camera only: no warping on the ultrawide range.
         enabled = z >= 0.95f
     }
@@ -272,7 +273,7 @@ class StabPipeline(
         if (enabled && !rawMode) {
             val centre = ts + offsetNs + exposure / 2 + readout / 2
             val qr = gyro.orientationAt(centre)
-            val qv = stabilizer.update(centre, qr)
+            val qv = stabilizer.update(centre, qr, gyro.upImg())
             Stabilizer.rowMatrices(qv, ts + offsetNs, readout, exposure, { gyro.orientationAt(it) }, rows)
         } else {
             Stabilizer.identityRows(rows)

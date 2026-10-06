@@ -75,6 +75,9 @@ class OfflineProcessor(
         val hevc: Boolean = true,
         val timeOffsetMs: Double = 0.0,
         val gyroAxes: List<String> = emptyList(),
+        /** Horizon lock range in degrees (0 = off) and the recorded gravity log (`.grav.csv`). */
+        val horizonDeg: Double = 0.0,
+        val gravCsv: String? = null,
     )
 
     @Volatile var cancelled = false
@@ -130,7 +133,12 @@ class OfflineProcessor(
             val centre = LongArray(n) { meta.frameRel[it] + offsetNs + meta.frameExp[it] / 2 + meta.readoutNs / 2 }
             val real = Array(n) { path.at(centre[it]) }
             val tanHalf = (w / 2.0) / (k[0] * meta.zoom)
-            val plan = OfflineStabilizer.compute(centre, real, OfflineStabilizer.Params(o.sigmaSec, o.maxAngleDeg, tanHalf, o.minCrop, o.maxCrop))
+            val axes = o.gyroAxes.ifEmpty { meta.gyroAxes }
+            val up = if (o.horizonDeg > 0 && o.gravCsv != null) gravityPerFrame(o.gravCsv, centre, axes) else null
+            if (o.horizonDeg > 0 && up == null) Logger.w(TAG, "Горизонт включён, но лога гравитации нет: пропускаю")
+            val intr = FrameFit.Intr(k[0].toDouble(), k[1].toDouble(), k[2].toDouble(), k[3].toDouble(), w.toDouble(), h.toDouble()).scaled(meta.zoom.toDouble())
+            val plan = OfflineStabilizer.compute(centre, real,
+                OfflineStabilizer.Params(o.sigmaSec, o.maxAngleDeg, tanHalf, o.minCrop, o.maxCrop, intr = intr, horizonDeg = if (up != null) o.horizonDeg else 0.0), up)
             Logger.i(TAG, "Траектория: $n кадров, кроп ${"%.3f".format(plan.crop.minOrNull() ?: 1.0)}–${"%.3f".format(plan.crop.maxOrNull() ?: 1.0)}, поправка до ${"%.2f".format(plan.offsetDeg.maxOrNull() ?: 0.0)}°")
 
             // 2) source
@@ -405,6 +413,23 @@ class OfflineProcessor(
                 check(GLES30.glCheckFramebufferStatus(GLES30.GL_FRAMEBUFFER) == GLES30.GL_FRAMEBUFFER_COMPLETE) { "FBO incomplete" }
             }
             GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, 0)
+        }
+    }
+
+    /** Interpolated "up" vector (camera-image frame) at each frame centre, from the `.grav.csv` sidecar. */
+    private fun gravityPerFrame(csv: String, centre: LongArray, axes: List<String>): Array<DoubleArray?>? {
+        val t = ArrayList<Long>(); val g = ArrayList<DoubleArray>()
+        for (line in csv.lineSequence().drop(1)) {
+            val p = line.split(',')
+            if (p.size < 4) continue
+            t += (p[0].toDouble() * 1e6).toLong(); g += doubleArrayOf(p[1].toDouble(), p[2].toDouble(), p[3].toDouble())
+        }
+        if (t.size < 2) return null
+        return Array(centre.size) { i ->
+            val idx = nearest(t.toLongArray(), centre[i])
+            val v = g[idx]
+            val n = Math.sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2])
+            if (n < 1e-6) null else OrientationPath.mapVec(axes, v[0] / n, v[1] / n, v[2] / n)
         }
     }
 

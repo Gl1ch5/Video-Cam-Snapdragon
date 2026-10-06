@@ -42,7 +42,7 @@
   },
   "stab": {
     "enabled": true,
-    "crop": 1.12,
+    "crop": 1.15,
     "maxAngleDeg": 6.0,
     "tauMaxMs": 500,
     "tauMinMs": 40,
@@ -59,7 +59,8 @@
     "denoise": 0.5,
     "denoiseSigma": 0.04,
     "timeOffsetMs": 0,
-    "minCrop": 1.03
+    "minCrop": 1.03,
+    "horizonDeg": 0
   },
   "post": {
     "enabled": false,

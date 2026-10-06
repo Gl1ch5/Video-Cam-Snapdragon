@@ -607,6 +607,7 @@ class MainActivity : Activity(), VideoCamera.Listener {
                 }
             }),
             QuickMenu.Item("Стабилизация", { label(Presets.strength) }, { cycle(Presets.strength) }),
+            QuickMenu.Item("Горизонт", { label(Presets.horizon) }, { cycle(Presets.horizon) }),
             QuickMenu.Item("Шумоподавление", { label(Presets.denoise) }, { cycle(Presets.denoise) }),
             QuickMenu.Item("Резкость", { label(Presets.sharpen) }, { cycle(Presets.sharpen) }),
             QuickMenu.Item("LUT", { if (cfg.lutId.isEmpty()) "нет" else lutTitle(cfg.lutId) }, {

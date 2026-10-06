@@ -25,13 +25,19 @@ class Stabilizer(private val p: Params) {
         val maxCrop: Double = 1.12,
         val attackSec: Double = 0.15,
         val releaseSec: Double = 1.5,
+        /** Exact fit test (preferred over the tan() approximation when set). */
+        val intr: FrameFit.Intr? = null,
+        /** Horizon lock range in degrees (0 = off). */
+        val horizonDeg: Double = 0.0,
     )
 
     private var qv: Quat? = null
     private var prevReal: Quat? = null
     private var prevT = 0L
     private val vel = DoubleArray(3)
-    private var peakDeg = 0.0
+    @Volatile var intr: FrameFit.Intr? = p.intr
+    private var horizon = 0.0
+    private var peakZoom = 1.0
 
     /** Current zoom-in factor: only as large as the recent shake needs, so the picture stays as sharp as possible. */
     var crop = (p.minCrop + p.maxCrop) / 2
@@ -41,10 +47,13 @@ class Stabilizer(private val p: Params) {
     var lastCorrectionDeg = 0.0
         private set
 
-    fun reset() { qv = null; prevReal = null; vel.fill(0.0); peakDeg = 0.0 }
+    /** Last virtual orientation (for tests and diagnostics). */
+    fun virtualDebug(): Quat = qv ?: Quat.IDENTITY
+
+    fun reset() { qv = null; prevReal = null; vel.fill(0.0); peakZoom = 1.0; horizon = 0.0 }
 
     /** Feeds the real orientation at frame centre time [tNs]; returns the virtual camera orientation. */
-    fun update(tNs: Long, real: Quat): Quat {
+    fun update(tNs: Long, real: Quat, upImg: DoubleArray? = null): Quat {
         val cur = qv
         if (cur == null) {
             qv = real; prevReal = real; prevT = tNs
@@ -58,24 +67,41 @@ class Stabilizer(private val p: Params) {
         for (i in 0..2) vel[i] += (d[i] / dt - vel[i]) * a
         val base = (cur * Quat.fromRotVec(vel[0] * dt, vel[1] * dt, vel[2] * dt)).normalized()
 
-        // Margin the current crop can hide (90 % of it), never more than the absolute cap.
-        val maxRad = minOf(Math.toRadians(p.maxAngleDeg), kotlin.math.atan((1.0 - 1.0 / crop) * p.tanHalfFov * 0.9))
+        val fit = intr
+        val maxRad: Double
+        val offAbs = Math.toRadians(p.maxAngleDeg)
+        maxRad = if (fit != null) offAbs else minOf(offAbs, kotlin.math.atan((1.0 - 1.0 / crop) * p.tanHalfFov * 0.9))
         val tight = ((real.conj() * base).angle() / maxRad).coerceIn(0.0, 1.0)
         val tau = p.tauMaxSec + (p.tauMinSec - p.tauMaxSec) * tight * tight
         var v = Quat.slerp(base, real, 1.0 - exp(-dt / tau))
 
-        val off = (real.conj() * v).angle()
-        if (off > maxRad) v = Quat.slerp(real, v, maxRad / off)
+        // Horizon lock: counter-rotate about the optical axis toward level, smoothed, limited to the configured range.
+        if (p.horizonDeg > 0 && upImg != null) {
+            val target = Math.toDegrees(HorizonLock.correction(upImg)).coerceIn(-p.horizonDeg, p.horizonDeg)
+            horizon += (target - horizon) * (1.0 - exp(-dt / 0.5))
+            v = (v * Quat.fromRotVec(0.0, 0.0, Math.toRadians(horizon))).normalized()
+        }
+
+        var offQ = real.conj() * v
+        if (fit != null) {
+            val rv = offQ.toRotVec()
+            val k = FrameFit.scaleToFit(rv, crop, fit)
+            if (k < 1.0) { v = (real * Quat.fromRotVec(rv[0] * k, rv[1] * k, rv[2] * k)).normalized(); offQ = real.conj() * v }
+        } else {
+            val off = offQ.angle()
+            if (off > maxRad) { v = Quat.slerp(real, v, maxRad / off); offQ = real.conj() * v }
+        }
 
         qv = v
         prevReal = real
         prevT = tNs
-        lastCorrectionDeg = Math.toDegrees((real.conj() * v).angle())
+        lastCorrectionDeg = Math.toDegrees(offQ.angle())
 
-        // Peak-hold of the excursion drives the crop: fast attack, slow release.
-        peakDeg = if (lastCorrectionDeg > peakDeg) lastCorrectionDeg else peakDeg * exp(-dt / p.releaseSec)
-        val need = Math.toRadians(peakDeg * 1.2 + 0.6)
-        val target = (1.0 / (1.0 - kotlin.math.tan(need) / p.tanHalfFov)).coerceIn(p.minCrop, p.maxCrop)
+        // Peak-hold of the zoom this excursion needs: fast attack, slow release.
+        val needZ = if (fit != null) FrameFit.minZoom(offQ.toMatrix(), fit) * 1.03
+        else 1.0 / (1.0 - kotlin.math.tan(Math.toRadians(lastCorrectionDeg * 1.2 + 0.6)) / p.tanHalfFov)
+        peakZoom = if (needZ > peakZoom) needZ else 1.0 + (peakZoom - 1.0) * exp(-dt / p.releaseSec)
+        val target = peakZoom.coerceIn(p.minCrop, p.maxCrop)
         val rate = if (target > crop) p.attackSec else p.releaseSec
         crop += (target - crop) * (1.0 - exp(-dt / rate))
         return v

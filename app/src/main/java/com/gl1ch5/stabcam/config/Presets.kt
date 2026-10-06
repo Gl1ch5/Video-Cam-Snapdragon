@@ -7,9 +7,15 @@ object Presets {
     class Level(val label: String, val values: Map<String, Any>)
 
     val strength = listOf(
-        Level("Слабая", mapOf("stab.tauMaxMs" to 300, "stab.crop" to 1.08, "stab.maxAngleDeg" to 4.0)),
-        Level("Средняя", mapOf("stab.tauMaxMs" to 500, "stab.crop" to 1.12, "stab.maxAngleDeg" to 6.0)),
-        Level("Сильная", mapOf("stab.tauMaxMs" to 800, "stab.crop" to 1.16, "stab.maxAngleDeg" to 8.0)),
+        Level("Слабая", mapOf("stab.tauMaxMs" to 300, "stab.crop" to 1.10, "stab.maxAngleDeg" to 4.0)),
+        Level("Средняя", mapOf("stab.tauMaxMs" to 500, "stab.crop" to 1.15, "stab.maxAngleDeg" to 6.0)),
+        Level("Сильная", mapOf("stab.tauMaxMs" to 800, "stab.crop" to 1.22, "stab.maxAngleDeg" to 9.0)),
+    )
+    val horizon = listOf(
+        Level("Выкл", mapOf("stab.horizonDeg" to 0.0)),
+        Level("±10°", mapOf("stab.horizonDeg" to 10.0)),
+        Level("±25°", mapOf("stab.horizonDeg" to 25.0)),
+        Level("±45° (ПОСТ)", mapOf("stab.horizonDeg" to 45.0)),
     )
     val denoise = listOf(
         Level("Выкл", mapOf("stab.denoise" to 0.0)),
