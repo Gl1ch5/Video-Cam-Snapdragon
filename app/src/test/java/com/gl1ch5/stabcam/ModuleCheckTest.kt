@@ -32,3 +32,24 @@ class ModuleCheckTest {
         assertTrue(ModuleManager.check("""{"module":1,"id":"user.empty"}""") is ModuleManager.Result.Error)
     }
 }
+
+class ModuleSanitizeTest {
+    @Test
+    fun repairsFencesCommentsTrailingCommasAndTruncation() {
+        val ai = "Вот ваш мод:\n```json\n{\n  \"module\": 1, // версия\n  \"id\": \"user.cinematic-walk\",\n  \"name\": \"Кино\",\n  \"config\": { \"stab\": { \"denoise\": 0.6, }, \"video\": { \"lut\": \"cinema\" "
+        val r = ModuleManager.check(ai)
+        assertTrue(r.toString(), r is ModuleManager.Result.Ok)
+        val notes = (r as ModuleManager.Result.Ok).notes.joinToString()
+        assertTrue(notes, notes.contains("обрезан") && notes.contains("комментарии"))
+    }
+
+    @Test
+    fun settingsPlaceholdersResolveAndAreValidated() {
+        val j = """{"module":1,"id":"user.s1","config":{"stab":{"denoise":"${'$'}{d}"}},"settings":[{"key":"d","type":"slider","min":0,"max":1,"step":0.1,"default":0.4}]}"""
+        val ok = ModuleManager.check(j) as ModuleManager.Result.Ok
+        val patch = ModuleManager.resolve(ok.module.json.getJSONObject("config"), mapOf("d" to 0.7))
+        assertTrue(patch.getJSONObject("stab").getDouble("denoise") == 0.7)
+        val bad = """{"module":1,"id":"user.s2","config":{"stab":{"denoise":"${'$'}{nope}"}}}"""
+        assertTrue(ModuleManager.check(bad) is ModuleManager.Result.Error)
+    }
+}

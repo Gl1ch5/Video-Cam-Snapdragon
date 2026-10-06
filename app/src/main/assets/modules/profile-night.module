@@ -1,0 +1,31 @@
+{
+  "module": 1,
+  "id": "profile.night",
+  "name": "Ночь и тёмные сцены",
+  "icon": "🌙",
+  "author": "StabCam",
+  "version": "1.0",
+  "description": "Сильнее шумоподавление по кадрам, мягче резкость, щадящая стабилизация.",
+  "config": {
+    "stab": {
+      "denoise": "${denoise}",
+      "denoiseSigma": 0.06,
+      "sharpen": 0.2,
+      "tauMaxMs": 600
+    },
+    "camera": {
+      "noiseReduction": "hq"
+    }
+  },
+  "settings": [
+    {
+      "key": "denoise",
+      "title": "Сила шумоподавления",
+      "type": "slider",
+      "min": 0.3,
+      "max": 1,
+      "step": 0.05,
+      "default": 0.75
+    }
+  ]
+}

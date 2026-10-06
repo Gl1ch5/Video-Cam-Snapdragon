@@ -17,7 +17,7 @@ import java.net.URL
 /** Checks the rolling "nightly" GitHub release and installs the APK through PackageInstaller. */
 class Updater(private val ctx: Context, private val repo: String, private val tag: String) {
 
-    data class Release(val id: String, val assetName: String, val url: String, val size: Long, val published: String)
+    data class Release(val id: String, val assetName: String, val url: String, val size: Long, val published: String, val notes: String = "")
 
     /** Blocking; call off the main thread. Returns null when the release cannot be read. */
     fun fetchLatest(): Release? = try {
@@ -36,7 +36,7 @@ class Updater(private val ctx: Context, private val repo: String, private val ta
                 val a = assets.getJSONObject(i)
                 val n = a.getString("name")
                 if (n.endsWith(".apk")) {
-                    found = Release(n.removePrefix("StabCam-").removeSuffix(".apk"), n, a.getString("browser_download_url"), a.optLong("size"), j.optString("published_at"))
+                    found = Release(n.removePrefix("StabCam-").removeSuffix(".apk"), n, a.getString("browser_download_url"), a.optLong("size"), j.optString("published_at"), j.optString("body"))
                     break
                 }
             }

@@ -1,0 +1,61 @@
+{
+  "module": 1,
+  "id": "profile.max-quality",
+  "name": "Максимум качества",
+  "icon": "💎",
+  "author": "StabCam",
+  "version": "1.0",
+  "description": "Высокий битрейт, чистая картинка и аккуратная резкость. Файлы больше, телефон греется сильнее.",
+  "config": {
+    "video": {
+      "bitrateScale": "${bitrate}",
+      "hdr": "${hdr}"
+    },
+    "stab": {
+      "denoise": 0.6,
+      "sharpen": 0.4,
+      "bicubic": true
+    },
+    "camera": {
+      "noiseReduction": "hq"
+    }
+  },
+  "settings": [
+    {
+      "key": "bitrate",
+      "title": "Битрейт",
+      "type": "choice",
+      "options": [
+        {
+          "label": "×1.2",
+          "value": 1.2
+        },
+        {
+          "label": "×1.4",
+          "value": 1.4
+        },
+        {
+          "label": "×1.8",
+          "value": 1.8
+        }
+      ],
+      "default": 1.4
+    },
+    {
+      "key": "hdr",
+      "title": "HDR (HLG)",
+      "type": "choice",
+      "options": [
+        {
+          "label": "Выкл",
+          "value": "off"
+        },
+        {
+          "label": "HLG 10-бит",
+          "value": "hlg10"
+        }
+      ],
+      "default": "off"
+    }
+  ]
+}

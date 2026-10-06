@@ -1,0 +1,51 @@
+{
+  "module": 1,
+  "id": "look.cinema",
+  "name": "Кино",
+  "icon": "🎬",
+  "author": "StabCam",
+  "version": "1.0",
+  "description": "Кинематографичный цвет (teal & orange) и мягкая плавная стабилизация для прогулок.",
+  "config": {
+    "video": {
+      "lut": "cinema",
+      "lutStrength": "${lutAmt}"
+    },
+    "stab": {
+      "tauMaxMs": "${smooth}",
+      "crop": 1.16,
+      "sharpen": 0.3
+    }
+  },
+  "settings": [
+    {
+      "key": "lutAmt",
+      "title": "Сила цвета",
+      "type": "slider",
+      "min": 0,
+      "max": 1,
+      "step": 0.05,
+      "default": 0.85
+    },
+    {
+      "key": "smooth",
+      "title": "Плавность",
+      "type": "choice",
+      "options": [
+        {
+          "label": "Живая",
+          "value": 500
+        },
+        {
+          "label": "Плавная",
+          "value": 800
+        },
+        {
+          "label": "Кино",
+          "value": 1200
+        }
+      ],
+      "default": 800
+    }
+  ]
+}

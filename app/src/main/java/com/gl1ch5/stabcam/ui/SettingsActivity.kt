@@ -175,55 +175,167 @@ class SettingsActivity : Activity() {
 
     private fun modules() {
         section("Мод с помощью нейросети")
-        action("Скопировать промпт для нейросети", "Вставьте в ИИ и опишите нужный мод", "Копировать") { copy("prompt", ModuleManager.aiPrompt()) }
-        action("Вставить мод из буфера", "Готовый JSON от нейросети — одним нажатием", "Вставить") {
+        action("Скопировать промпт для нейросети", "С данными вашего телефона; ИИ сам поищет характеристики в интернете", "Копировать") {
+            copy("prompt", ModuleManager.aiPrompt(deviceInfo()))
+        }
+        action("Вставить мод из буфера", "Готовый ответ нейросети — одним нажатием", "Вставить") {
             val t = getSystemService(ClipboardManager::class.java).primaryClip?.getItemAt(0)?.coerceToText(this)?.toString().orEmpty()
             if (t.isBlank()) toast("Буфер пуст") else installFromText(t)
         }
-        note("1. Нажмите «Скопировать промпт». 2. Вставьте его в нейросеть и допишите, какой мод нужен. 3. Скопируйте ответ и нажмите «Вставить мод из буфера».")
+        note("1. «Скопировать промпт». 2. Вставьте в нейросеть, допишите, что нужно (например: «базовый мод для моего телефона»). 3. Скопируйте ответ целиком и нажмите «Вставить мод из буфера». Если ответ обрезан или с комментариями, приложение попробует его починить.")
+
+        section("Установленные")
+        val list = mods.list()
+        if (list.isEmpty()) note("Пока ничего не установлено. Попробуйте каталог ниже.")
+        val conflicts = mods.conflicts()
+        list.forEachIndexed { idx, m -> moduleCard(m, idx, list.size) }
+        if (conflicts.isNotEmpty()) {
+            note("Пересечения: " + conflicts.entries.take(5).joinToString("; ") { "${ModuleManager.LABELS[it.key] ?: it.key} — ${it.value.joinToString(" → ")}" } + ". Побеждает нижний в списке; порядок меняется стрелками.")
+        }
+        val presets = mods.presets()
+        if (presets.isNotEmpty()) {
+            section("Пресеты из модов")
+            presets.forEach { (name, cfg) -> action(name, null, "Применить") { applyConfig(cfg); toast("Применён: $name") } }
+        }
+
+        section("Каталог")
+        val installedIds = list.map { it.id }.toSet()
+        mods.catalog().forEach { file ->
+            val r = ModuleManager.check(mods.catalogText(file))
+            if (r is ModuleManager.Result.Ok) {
+                val m = r.module
+                val fit = mods.deviceMatches(m)
+                action("${m.icon}  ${m.name}", m.description.take(110) + if (fit == true) "\n✓ подходит вашему телефону" else "",
+                    if (m.id in installedIds) "Установлен" else "Установить") { if (m.id !in installedIds) installFromText(mods.catalogText(file)) }
+            }
+        }
         section("Установка")
         action("Установить из файла", "Файл .module", "Выбрать") {
             startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("*/*"), REQ_MOD)
         }
         action("Вставить ссылку", "https://…/мод.module", "Указать") { askUrl() }
-        note("Мод может поменять настройки (качество, стабилизацию, шумоподавление, цвет), добавить свои LUT-ы и пресеты. Кода в модах нет: менять можно только разрешённые настройки, перед установкой показывается список изменений.")
-
-        section("Установленные")
-        val list = mods.list()
-        if (list.isEmpty()) note("Пока ничего не установлено.")
-        list.forEach { m ->
-            val card = cardRow()
-            val line = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
-            val texts = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-            texts.addView(titleView(m.name))
-            texts.addView(subView("v${m.version}" + (if (m.author.isNotEmpty()) " · ${m.author}" else "") + (if (m.lutCount > 0) " · LUT: ${m.lutCount}" else "") + (if (m.presetCount > 0) " · пресетов: ${m.presetCount}" else "")))
-            line.addView(texts, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-            line.addView(Switch(this).apply {
-                isChecked = m.enabled
-                thumbTintList = ColorStateList(arrayOf(intArrayOf(android.R.attr.state_checked), intArrayOf()), intArrayOf(accent, 0xFFBBBBBB.toInt()))
-                trackTintList = ColorStateList(arrayOf(intArrayOf(android.R.attr.state_checked), intArrayOf()), intArrayOf(0x66FFB020, 0x44FFFFFF))
-                setOnCheckedChangeListener { _, c -> mods.setEnabled(m.id, c); show(tab) }
-            })
-            card.addView(line)
-            if (m.description.isNotEmpty()) card.addView(subView(m.description))
-            card.addView(TextView(this).apply {
-                text = "Удалить"; setTextColor(0xFFFF6B6B.toInt()); setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f); setPadding(0, dp(10), 0, 0)
-                setOnClickListener { mods.remove(m.id); toast("Удалён: ${m.name}"); show(tab) }
-            })
-        }
-        val presets = mods.presets()
-        if (presets.isNotEmpty()) {
-            section("Пресеты из модов")
-            presets.forEach { (name, cfg) ->
-                action(name, null, "Применить") { applyConfig(cfg); toast("Применён: $name") }
-            }
-        }
+        note("Мод может поменять настройки, добавить LUT-ы, пресеты и свои ползунки. Кода в модах нет: менять можно только разрешённые ключи, перед установкой показывается, что именно изменится. Моды комбинируются: «база для телефона» + «кино» + «ночь». Спецификация: docs/MODULES.md в репозитории.")
         section("Создать")
         action("Поделиться моим стилем", "Экспорт текущих настроек в .module", "Экспорт") {
             val j = mods.exportCurrent(repo.effectiveJson(), "Мои настройки").toString(2)
             copy("module", j)
             startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, j), "Мод StabCam"))
         }
+    }
+
+    private fun moduleCard(m: ModuleManager.Module, idx: Int, total: Int) {
+        val card = cardRow()
+        val line = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+        line.addView(TextView(this).apply {
+            text = m.icon; textSize = 22f; gravity = Gravity.CENTER
+            background = GradientDrawable().apply { cornerRadius = dp(14).toFloat(); setColor(if (m.enabled) 0x33FFB020 else 0x18FFFFFF) }
+            alpha = if (m.enabled) 1f else 0.6f
+        }, LinearLayout.LayoutParams(dp(44), dp(44)))
+        val texts = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(12), 0, dp(8), 0) }
+        texts.addView(titleView(m.name))
+        val fit = mods.deviceMatches(m)
+        texts.addView(subView("v${m.version}" + (if (m.author.isNotEmpty()) " · ${m.author}" else "") + (if (m.lutCount > 0) " · LUT ${m.lutCount}" else "") + (if (m.presetCount > 0) " · пресетов ${m.presetCount}" else "") + (if (fit == false) " · ⚠ другое устройство" else if (fit == true) " · ✓ ваш телефон" else "")))
+        line.addView(texts, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        line.addView(Switch(this).apply {
+            isChecked = m.enabled
+            thumbTintList = ColorStateList(arrayOf(intArrayOf(android.R.attr.state_checked), intArrayOf()), intArrayOf(accent, 0xFFBBBBBB.toInt()))
+            trackTintList = ColorStateList(arrayOf(intArrayOf(android.R.attr.state_checked), intArrayOf()), intArrayOf(0x66FFB020, 0x44FFFFFF))
+            setOnCheckedChangeListener { _, c -> mods.setEnabled(m.id, c); show(tab) }
+        })
+        card.addView(line)
+        if (m.description.isNotEmpty()) card.addView(subView(m.description).apply { setPadding(0, dp(8), 0, 0) })
+        val missing = m.depends.filter { d -> mods.list().none { it.id == d && it.enabled } }
+        if (m.enabled && missing.isNotEmpty()) card.addView(subView("Нужны также: ${missing.joinToString()}").apply { setTextColor(0xFFFFC857.toInt()); setPadding(0, dp(6), 0, 0) })
+
+        // module's own settings
+        if (m.settings.isNotEmpty() && m.enabled) {
+            card.addView(View(this).apply { setBackgroundColor(0x22FFFFFF) }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(1)).apply { topMargin = dp(10); bottomMargin = dp(4) })
+            m.settings.forEach { st -> moduleSetting(card, m, st) }
+        }
+        val actions = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(0, dp(10), 0, 0) }
+        fun chip(t: String, color: Int, on: Boolean = true, onClick: () -> Unit) = TextView(this).apply {
+            text = t; setTextColor(color); setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f); setPadding(dp(10), dp(4), dp(10), dp(4)); alpha = if (on) 1f else 0.3f
+            if (on) setOnClickListener { onClick() }
+        }
+        actions.addView(chip("▲", 0xCCFFFFFF.toInt(), idx > 0) { mods.move(m.id, -1); show(tab) })
+        actions.addView(chip("▼", 0xCCFFFFFF.toInt(), idx < total - 1) { mods.move(m.id, 1); show(tab) })
+        actions.addView(TextView(this), LinearLayout.LayoutParams(0, 1, 1f))
+        actions.addView(chip("Удалить", 0xFFFF6B6B.toInt()) { mods.remove(m.id); toast("Удалён: ${m.name}"); show(tab) })
+        card.addView(actions)
+    }
+
+    private fun moduleSetting(card: LinearLayout, m: ModuleManager.Module, st: ModuleManager.Setting) {
+        val cur = mods.value(m, st)
+        val box = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(0, dp(8), 0, dp(2)) }
+        card.addView(box)
+        val head = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        head.addView(TextView(this).apply { text = st.title; setTextColor(Color.WHITE); setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f) }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        val vv = TextView(this).apply { setTextColor(accent); setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f) }
+        head.addView(vv)
+        box.addView(head)
+        if (st.desc.isNotEmpty()) box.addView(subView(st.desc))
+        fun fmt(d: Double) = (if (d == Math.floor(d)) d.toLong().toString() else "%.2f".format(d).trimEnd('0').trimEnd('.')) + st.unit
+        when (st.type) {
+            "toggle" -> {
+                vv.visibility = View.GONE
+                head.addView(Switch(this).apply {
+                    isChecked = cur as? Boolean ?: false
+                    thumbTintList = ColorStateList(arrayOf(intArrayOf(android.R.attr.state_checked), intArrayOf()), intArrayOf(accent, 0xFFBBBBBB.toInt()))
+                    trackTintList = ColorStateList(arrayOf(intArrayOf(android.R.attr.state_checked), intArrayOf()), intArrayOf(0x66FFB020, 0x44FFFFFF))
+                    setOnCheckedChangeListener { _, c -> mods.setValue(m, st.key, c) }
+                })
+            }
+            "choice" -> {
+                vv.visibility = View.GONE
+                val chips = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; setPadding(0, dp(8), 0, 0) }
+                val views = ArrayList<TextView>()
+                var sel = st.options.indexOfFirst { it.second.toString() == cur.toString() || (it.second as? Number)?.toDouble() == (cur as? Number)?.toDouble() }.coerceAtLeast(0)
+                fun paint() = views.forEachIndexed { i, tv -> (tv.background as GradientDrawable).setColor(if (i == sel) 0x44FFB020 else 0x18FFFFFF); tv.setTextColor(if (i == sel) accent else 0xCCFFFFFF.toInt()) }
+                st.options.forEachIndexed { i, (label, value) ->
+                    views += TextView(this).apply {
+                        text = label; setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f); gravity = Gravity.CENTER; setPadding(dp(12), dp(7), dp(12), dp(7))
+                        background = GradientDrawable().apply { cornerRadius = dp(14).toFloat() }
+                        setOnClickListener { sel = i; paint(); mods.setValue(m, st.key, value) }
+                    }.also { chips.addView(it, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { marginEnd = dp(6) }) }
+                }
+                paint()
+                box.addView(HorizontalScrollView(this).apply { isHorizontalScrollBarEnabled = false; addView(chips) })
+            }
+            else -> {
+                val steps = ((st.max - st.min) / st.step).toInt().coerceAtLeast(1)
+                val c = (cur as? Number)?.toDouble() ?: st.min
+                vv.text = fmt(c)
+                box.addView(SeekBar(this).apply {
+                    max = steps; progress = ((c - st.min) / st.step).toInt().coerceIn(0, steps)
+                    progressTintList = ColorStateList.valueOf(accent); thumbTintList = ColorStateList.valueOf(accent)
+                    setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                        override fun onProgressChanged(sb: SeekBar, p: Int, fromUser: Boolean) {
+                            val v = st.min + p * st.step
+                            vv.text = fmt(v)
+                            if (fromUser) mods.setValue(m, st.key, if (st.step >= 1.0 && st.step == Math.floor(st.step)) v.toLong() else v)
+                        }
+                        override fun onStartTrackingTouch(sb: SeekBar) {}
+                        override fun onStopTrackingTouch(sb: SeekBar) {}
+                    })
+                })
+            }
+        }
+    }
+
+    /** Device + camera facts for the AI prompt. */
+    private fun deviceInfo(): String {
+        val caps = CameraCaps.find(this, true)
+        val lines = ArrayList<String>()
+        lines += "Модель: ${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL} (${android.os.Build.DEVICE}), Android ${android.os.Build.VERSION.RELEASE} (API ${android.os.Build.VERSION.SDK_INT})"
+        lines += "Чип: ${android.os.Build.SOC_MANUFACTURER} ${android.os.Build.SOC_MODEL}"
+        if (caps != null) {
+            lines += "Основная камера: id ${caps.id}; режимы записи без обхода: ${caps.supportedQualities.joinToString { it.label }}"
+            lines += "OIS заявлен в Camera2: ${if (caps.hasOis) "да" else "нет (может быть скрыт прошивкой)"}; HLG10: ${if (caps.supportsHlg10) "да" else "нет"}; стоковые режимы EIS: ${caps.eisModes}"
+            lines += "Зум: ${caps.zoomRange.lower}–${caps.zoomRange.upper}×"
+            lines += caps.report().lines().filter { it.startsWith("High-speed") || it.startsWith("Sensor size") || it.startsWith("Active array") || it.startsWith("Focal") || it.startsWith("Recorder sizes") }.joinToString("\n")
+        }
+        lines += "Текущий конфиг StabCam (сокращённо): " + repo.effectiveJson().toString().take(900)
+        return lines.joinToString("\n")
     }
 
     private fun applyConfig(cfg: JSONObject, prefix: String = "") {
@@ -255,15 +367,24 @@ class SettingsActivity : Activity() {
             }.setNegativeButton("Отмена", null).show()
     }
 
-    /** Validates, shows what the module changes, installs on confirm. */
+    /** Validates (tolerantly), shows the install card, installs on confirm. */
     private fun installFromText(text: String) {
         when (val r = mods.check(text)) {
             is ModuleManager.Result.Error -> android.app.AlertDialog.Builder(this).setTitle("Мод не подошёл").setMessage(r.message).setPositiveButton("OK", null).show()
-            is ModuleManager.Result.Ok -> android.app.AlertDialog.Builder(this)
-                .setTitle("Установить «${r.module.name}»?")
-                .setMessage((if (r.module.author.isNotEmpty()) "Автор: ${r.module.author}\n" else "") + r.module.description + "\n\nИзменит:\n• " + r.summary.joinToString("\n• "))
-                .setPositiveButton("Установить") { _, _ -> mods.install(r.module); toast("Установлен: ${r.module.name}"); show(tab) }
-                .setNegativeButton("Отмена", null).show()
+            is ModuleManager.Result.Ok -> {
+                val m = r.module
+                val installed = mods.list()
+                val diffs = mods.diff(m, repo.effectiveJson())
+                val mine = ArrayList<String>().also { ModuleManager.flatten(m.json.optJSONObject("config") ?: JSONObject(), "", it) }
+                val clash = installed.filter { it.enabled && it.id != m.id }.filter { o ->
+                    val keys = ArrayList<String>().also { ModuleManager.flatten(o.json.optJSONObject("config") ?: JSONObject(), "", it) }
+                    keys.any { it in mine }
+                }.map { it.name }
+                val missing = m.depends.filter { d -> installed.none { it.id == d } }
+                ModuleInstallDialog(this).show(m, r.summary, r.notes, diffs, mods.deviceMatches(m), clash, missing) { enable ->
+                    mods.install(m, enable); toast("Установлен: ${m.name}"); show(tab)
+                }
+            }
         }
     }
 
@@ -315,8 +436,9 @@ class SettingsActivity : Activity() {
                     updStatus.text = when {
                         r == null -> "Не удалось проверить (репозиторий приватный или нет сети) — см. лог"
                         !u.isNewer(r) -> "Установлена последняя версия (${u.currentId()})"
-                        else -> "Доступна ${r.id}. Откройте камеру: обновление скачается и установится само"
+                        else -> "Доступна ${r.id}"
                     }
+                    if (r != null && u.isNewer(r)) UpdateDialog(this).show(u, r)
                 }
             }
         }

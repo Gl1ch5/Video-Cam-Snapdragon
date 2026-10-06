@@ -1,0 +1,67 @@
+{
+  "module": 1,
+  "id": "base.oneplus-15r",
+  "name": "Базовая настройка: OnePlus 15R",
+  "icon": "📱",
+  "author": "StabCam",
+  "version": "1.0",
+  "description": "Правильные параметры для OnePlus на Snapdragon: OIS вкл, свой стабилизатор вместо стокового EIS, HEVC, показ всех режимов камеры (4K60/4K120 скрыты прошивкой). Ставьте первым, остальные моды накладываются поверх.",
+  "match": {
+    "manufacturer": [
+      "OnePlus"
+    ]
+  },
+  "config": {
+    "camera": {
+      "ois": true,
+      "stockEis": false,
+      "forceAllQualities": true,
+      "noiseReduction": "fast",
+      "edge": "fast"
+    },
+    "video": {
+      "codec": "hevc",
+      "audio": true
+    },
+    "stab": {
+      "enabled": true,
+      "crop": "${maxCrop}",
+      "tauMaxMs": 500,
+      "velTauMs": 300,
+      "timeOffsetMs": "${syncMs}"
+    }
+  },
+  "settings": [
+    {
+      "key": "maxCrop",
+      "title": "Макс. кроп стабилизации",
+      "type": "choice",
+      "options": [
+        {
+          "label": "1.08 (меньше кроп)",
+          "value": 1.08
+        },
+        {
+          "label": "1.12",
+          "value": 1.12
+        },
+        {
+          "label": "1.16 (стабильнее)",
+          "value": 1.16
+        }
+      ],
+      "default": 1.12
+    },
+    {
+      "key": "syncMs",
+      "title": "Сдвиг гироскопа, мс",
+      "type": "slider",
+      "min": -10,
+      "max": 10,
+      "step": 1,
+      "default": 0,
+      "unit": " мс",
+      "desc": "Подстройка синхронизации гироскопа и кадров, если остаётся микро-дрожание."
+    }
+  ]
+}

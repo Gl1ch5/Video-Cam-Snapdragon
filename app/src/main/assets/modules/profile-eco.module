@@ -1,0 +1,38 @@
+{
+  "module": 1,
+  "id": "profile.eco-storage",
+  "name": "Экономия места",
+  "icon": "🗜️",
+  "author": "StabCam",
+  "version": "1.0",
+  "description": "Меньше битрейт и мягкое шумоподавление: ролики заметно легче, картинка остаётся чистой.",
+  "config": {
+    "video": {
+      "bitrateScale": "${bitrate}",
+      "codec": "hevc"
+    },
+    "stab": {
+      "denoise": "${denoise}"
+    }
+  },
+  "settings": [
+    {
+      "key": "bitrate",
+      "title": "Битрейт",
+      "type": "slider",
+      "min": 0.5,
+      "max": 1.0,
+      "step": 0.05,
+      "default": 0.7
+    },
+    {
+      "key": "denoise",
+      "title": "Шумоподавление",
+      "type": "slider",
+      "min": 0,
+      "max": 1,
+      "step": 0.05,
+      "default": 0.4
+    }
+  ]
+}

@@ -685,6 +685,7 @@ class MainActivity : Activity(), VideoCamera.Listener {
 
     private fun checkUpdate(manual: Boolean) {
         val u = Updater(this, cfg.updateRepo, cfg.updateTag)
+        val prefs = getSharedPreferences("upd", MODE_PRIVATE)
         thread {
             val r = u.fetchLatest()
             when {
@@ -695,16 +696,11 @@ class MainActivity : Activity(), VideoCamera.Listener {
                 }
                 else -> {
                     Logger.i(Updater.TAG, "Найдена новая версия ${r.id} (сейчас ${u.currentId()})")
-                    if (!u.canInstall()) {
-                        runOnUiThread { toast("Разрешите установку из этого приложения"); u.requestInstallPermission() }
-                        return@thread
+                    // "Позже" is remembered per version so the card does not nag on every launch
+                    if (!manual && prefs.getString("skip", "") == r.id) return@thread
+                    runOnUiThread {
+                        if (!isFinishing && !camera.isRecording) UpdateDialog(this).show(u, r) { prefs.edit().putString("skip", r.id).apply() }
                     }
-                    runOnUiThread { showDiag("Обновление ${r.id}: загрузка…") }
-                    val f = u.download(r) { p -> runOnUiThread { showDiag("Обновление ${r.id}: $p%") } }
-                    if (f != null) {
-                        runOnUiThread { showDiag("Устанавливаю ${r.id}…", 8000) }
-                        runCatching { u.install(f) }.onFailure { Logger.e(Updater.TAG, "Установка", it) }
-                    } else runOnUiThread { showDiag("Не удалось скачать обновление", 6000) }
                 }
             }
         }
