@@ -156,6 +156,18 @@ class SettingsActivity : Activity() {
         choice("Режим интерфейса", listOf("Простой", "Про"), if (simple) 0 else 1) { repo.set("ui.mode", if (it == 0) "simple" else "pro"); recreate() }
     }
 
+    /** One-tap return to the device preset; asks first. Installed modules are kept. */
+    private fun resetAllRow() {
+        action("Сбросить все настройки", "К заводским значениям для вашего телефона. Моды и записи не удаляются.", "Сбросить") {
+            android.app.AlertDialog.Builder(this)
+                .setTitle("Сбросить настройки?")
+                .setMessage("Все ваши изменения будут потеряны, останутся пресет устройства и установленные моды.")
+                .setPositiveButton("Сбросить") { _, _ -> repo.resetUserOverrides(); toast("Настройки сброшены"); recreate() }
+                .setNegativeButton("Отмена", null)
+                .show()
+        }
+    }
+
     /** Simple mode: a handful of big, friendly choices. */
     private fun home(e: JSONObject) {
         section("Съёмка")
@@ -175,6 +187,7 @@ class SettingsActivity : Activity() {
         action("Стиль", if (id.isEmpty()) "Без LUT" else (Luts.builtin.firstOrNull { it.id == id }?.name ?: id.substringAfterLast('/')), "Выбрать") { anchor -> lutPicker.show(anchor, id) }
         section("Интерфейс")
         modeChoice()
+        resetAllRow()
         note("«Про» показывает все настройки и кнопки на экране камеры.")
     }
 
@@ -434,6 +447,7 @@ class SettingsActivity : Activity() {
 
     private fun system() {
         modeChoice()
+        resetAllRow()
         section("Обновления")
         val up = getSharedPreferences("upd", MODE_PRIVATE)
         val lastMs = up.getLong("last_check", 0)
