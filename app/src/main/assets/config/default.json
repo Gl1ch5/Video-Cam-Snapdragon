@@ -61,7 +61,8 @@
     "denoiseSigma": 0.04,
     "timeOffsetMs": 0,
     "minCrop": 1.03,
-    "horizonDeg": 0
+    "horizonDeg": 0,
+    "oisPolicy": "keep"
   },
   "post": {
     "enabled": false,

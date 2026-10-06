@@ -61,6 +61,7 @@ class AppConfig(val json: JSONObject) {
     val stabVelTau: Double = stab.optDouble("velTauMs", 300.0) / 1000
     val stabMinCrop: Float = stab.optDouble("minCrop", 1.03).toFloat()
     val stabHorizonDeg: Double = stab.optDouble("horizonDeg", 0.0)
+    val stabOisOff: Boolean = stab.optString("oisPolicy", "keep") == "off"
     val stabSharpen: Float = stab.optDouble("sharpen", 0.35).toFloat()
     val stabPreviewRot: Int = stab.optInt("previewRot", 1).coerceIn(1, 4)
     val stabDenoise: Float = stab.optDouble("denoise", 0.5).toFloat()

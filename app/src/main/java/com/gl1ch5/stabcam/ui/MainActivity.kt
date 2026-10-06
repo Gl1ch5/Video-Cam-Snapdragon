@@ -368,7 +368,30 @@ class MainActivity : Activity(), VideoCamera.Listener {
 
     // --- VideoCamera.Listener (camera thread) ---
 
+    private fun runCalibration() {
+        showDiag("Калибровка осей: потрясите телефон 4 секунды влево-вправо и вверх-вниз, направив на сцену с деталями…")
+        camera.calibrateAxes { r, err ->
+            runOnUiThread {
+                if (r == null) { showDiag(err, 9000); return@runOnUiThread }
+                val pct = (r.best.score * 100).toInt()
+                val curOk = r.current != null && r.current.axes == r.best.axes
+                if (!r.confident) showDiag("Не удалось уверенно определить оси (лучший вариант ${r.best.axes.joinToString(",")} — $pct%). Потрясите сильнее.", 10000)
+                else if (curOk) showDiag("Оси гироскопа верные: ${r.best.axes.joinToString(",")} (совпадение $pct%)", 8000)
+                else {
+                    repo.set("stab.gyroAxes", JSONArray(r.best.axes)); cfg = repo.load()
+                    showDiag("Оси изменены на ${r.best.axes.joinToString(",")} (совпадение $pct%). Перезапускаю камеру…", 6000)
+                    main.postDelayed({ openCamera() }, 600)
+                }
+            }
+        }
+    }
+
     override fun onSessionReady() = runOnUiThread {
+        val calib = getSharedPreferences("calib", MODE_PRIVATE)
+        if (calib.getBoolean("pending", false)) {
+            calib.edit().putBoolean("pending", false).apply()
+            if ((controls.stab || cfg.postMode) && caps?.facingBack == true) main.postDelayed({ runCalibration() }, 1200) else toast("Для калибровки включите STAB")
+        }
         applyLut()
         if (!probed && cfg.probeOnStart) {
             probed = true

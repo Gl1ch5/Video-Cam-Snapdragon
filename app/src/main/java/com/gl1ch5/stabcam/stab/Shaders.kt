@@ -119,6 +119,29 @@ object Shaders {
         return p
     }
 
+    /** Luma of the camera frame at a tiny size (axis calibration). */
+    fun gray(): Int {
+        val vs = """#version 300 es
+            layout(location = 0) in vec2 aPos;
+            out vec2 vPos;
+            void main() { vPos = vec2((aPos.x + 1.0) * 0.5, (1.0 - aPos.y) * 0.5); gl_Position = vec4(aPos, 0.0, 1.0); }"""
+        val fs = """#version 300 es
+            #extension GL_OES_EGL_image_external_essl3 : require
+            precision mediump float;
+            uniform samplerExternalOES uCur;
+            in vec2 vPos;
+            out vec4 o;
+            void main() { float l = dot(texture(uCur, vPos).rgb, vec3(0.299, 0.587, 0.114)); o = vec4(l, l, l, 1.0); }"""
+        val p = GLES20.glCreateProgram()
+        GLES20.glAttachShader(p, compile(GLES20.GL_VERTEX_SHADER, vs))
+        GLES20.glAttachShader(p, compile(GLES20.GL_FRAGMENT_SHADER, fs))
+        GLES20.glLinkProgram(p)
+        val ok = IntArray(1)
+        GLES20.glGetProgramiv(p, GLES20.GL_LINK_STATUS, ok, 0)
+        check(ok[0] == GLES20.GL_TRUE) { "link gray: " + GLES20.glGetProgramInfoLog(p) }
+        return p
+    }
+
     fun denoise(): Int {
         val vs = """#version 300 es
             layout(location = 0) in vec2 aPos;

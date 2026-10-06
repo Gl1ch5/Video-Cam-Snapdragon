@@ -412,6 +412,8 @@ class SettingsActivity : Activity() {
         choice("Сила", Presets.strength.map { it.label }, Presets.indexOf(Presets.strength, e)) { Presets.apply(repo, Presets.strength[it]) }
         choice("Горизонт", Presets.horizon.map { it.label }, Presets.indexOf(Presets.horizon, e)) { Presets.apply(repo, Presets.horizon[it]) }
         note("Горизонт выравнивает крен по гравитации (в живом режиме ограничен запасом кропа, полный диапазон работает при обработке ПОСТ).")
+        choice("OIS при STAB", listOf("Как выше", "Выключать"), if (str(e, "stab.oisPolicy") == "off") 1 else 0) { repo.set("stab.oisPolicy", if (it == 1) "off" else "keep") }
+        note("Если со STAB заметны подёргивания, попробуйте «Выключать»: OIS и своя стабилизация могут компенсировать одно и то же движение дважды.")
         toggle("Аппаратный OIS", "Оптическая стабилизация камеры.", bool(e, "camera.ois", true)) { repo.set("camera.ois", it) }
         toggle("Стоковый EIS", "Обрезает и мылит кадр; при STAB отключается.", bool(e, "camera.stockEis", false)) { repo.set("camera.stockEis", it) }
         section("Качество картинки")
@@ -484,6 +486,11 @@ class SettingsActivity : Activity() {
         val idx = GyroTracker.CANDIDATES.indexOf(cur)
         action("Оси гироскопа", cur.joinToString(", ") + if (idx >= 0) "  (${idx + 1}/${GyroTracker.CANDIDATES.size})" else "", "Следующий") {
             repo.set("stab.gyroAxes", JSONArray(GyroTracker.CANDIDATES[(idx + 1) % GyroTracker.CANDIDATES.size])); show(tab)
+        }
+        action("Автокалибровка осей гироскопа", "Потрясти телефон 4 секунды; приложение подберёт оси по движению картинки", "Запустить") {
+            getSharedPreferences("calib", MODE_PRIVATE).edit().putBoolean("pending", true).apply()
+            toast("Вернитесь на экран камеры: калибровка начнётся сама (нужен STAB)")
+            finish()
         }
         choice("Поворот превью", listOf("1", "2", "3", "4"), (num(e, "stab.previewRot", 1.0).toInt() - 1).coerceIn(0, 3)) { repo.set("stab.previewRot", it + 1) }
         choice("Сдвиг гиро, мс", listOf("−6", "−3", "0", "+3", "+6"), listOf(-6.0, -3.0, 0.0, 3.0, 6.0).indexOfFirst { it == num(e, "stab.timeOffsetMs", 0.0) }.let { if (it < 0) 2 else it }) {

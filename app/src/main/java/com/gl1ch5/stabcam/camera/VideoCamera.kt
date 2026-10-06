@@ -135,6 +135,8 @@ class VideoCamera(private val ctx: Context, private val listener: Listener) {
 
     fun setLut(l: Lut?, strength: Float) = handler.post { lut = l; lutStrength = strength; pipeline?.setLut(l, strength) }
 
+    fun calibrateAxes(cb: (com.gl1ch5.stabcam.stab.AxisCalibrator.Result?, String) -> Unit) = handler.post { pipeline?.calibrateAxes(cb) ?: cb(null, "Нужна включённая стабилизация (STAB)") }
+
     fun setPreviewRot(n: Int) = handler.post { pipeline?.previewRot = n }
 
     fun updateControls(c: Controls) = handler.post {
@@ -346,7 +348,7 @@ class VideoCamera(private val ctx: Context, private val listener: Listener) {
             }
             set(
                 CaptureRequest.LENS_OPTICAL_STABILIZATION_MODE,
-                if (c.ois) CameraMetadata.LENS_OPTICAL_STABILIZATION_MODE_ON
+                if (c.ois && !(pipeline != null && cfg.stabOisOff)) CameraMetadata.LENS_OPTICAL_STABILIZATION_MODE_ON
                 else CameraMetadata.LENS_OPTICAL_STABILIZATION_MODE_OFF
             )
             set(

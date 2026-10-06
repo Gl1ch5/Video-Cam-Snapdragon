@@ -102,6 +102,21 @@ class StabPipeline(
     val readout: Long get() = readoutNs
     @Volatile private var released = false
 
+    // axis calibration (a few seconds of shaking, low-res luma frames)
+    private class Calib(val cb: (AxisCalibrator.Result?, String) -> Unit) {
+        var prev: ByteArray? = null; var prevTs = 0L; var frames = 0
+        val flows = ArrayList<DoubleArray>(); val disp = ArrayList<DoubleArray>()
+    }
+    private var calib: Calib? = null
+    private var grayProg = 0
+    private var grayFbo = 0
+    private var grayTex = 0
+    private val cw = 160
+    private val ch = 90
+    private val grayBuf = ByteBuffer.allocateDirect(cw * ch * 4)
+    private val statW = DoubleArray(3)
+    private var statWn = 0
+
     // stats
     private var frames = 0L
     private var statT = 0L
@@ -110,6 +125,7 @@ class StabPipeline(
     private var statCorr = 0.0
     private var statMaxCorr = 0.0
     private var lastTs = 0L
+    private var lastTsRate = 0L
     private var statDrops = 0
     private var statMaxDt = 0L
     private var statDtSum = 0L
@@ -125,6 +141,9 @@ class StabPipeline(
         latch.await(5, TimeUnit.SECONDS)
         err?.let { throw RuntimeException("GL setup failed: ${it.message}", it) }
     }
+
+    /** Shake the phone for ~4 s: matches image motion against the gyro and reports the best axis mapping. */
+    fun calibrateAxes(cb: (AxisCalibrator.Result?, String) -> Unit) { handler.post { calib = Calib(cb) } }
 
     fun setExposure(ns: Long) { if (ns > 0) exposureNs = ns }
     fun setReadout(ns: Long) { if (ns > 0) readoutNs = ns }
@@ -281,6 +300,14 @@ class StabPipeline(
         lastTs = ts
         st.getTransformMatrix(stm)
         frames++
+        // per-axis angular rate for the log (device frame, rms)
+        if (lastTsRate != 0L && ts > lastTsRate) {
+            val d = gyro.integrateRaw(lastTsRate, ts); val dtr = (ts - lastTsRate) / 1e9
+            for (a in 0..2) statW[a] += (d[a] / dtr) * (d[a] / dtr)
+            statWn++
+        }
+        lastTsRate = ts
+        calib?.let { calibStep(it, ts) }
 
         // Orientation at the frame centre, smoothed; per-row matrices for the rolling shutter.
         val readout = readoutNs
@@ -335,6 +362,9 @@ class StabPipeline(
                 statCorr / statN, statMaxCorr, stabilizer.crop,
                 if (gyro.latestTimeNs() - ts > -50_000_000L) "ok" else "ОТСТАЁТ", thermal(), if (enabled) "вкл" else "выкл"))
             statT = now; statN = 0; statRenderNs = 0; statCorr = 0.0; statMaxCorr = 0.0
+            if (statWn > 0) Logger.i(TAG, "Угловая скорость rms (°/с, оси устройства): x=%.1f y=%.1f z=%.1f".format(
+                Math.toDegrees(Math.sqrt(statW[0] / statWn)), Math.toDegrees(Math.sqrt(statW[1] / statWn)), Math.toDegrees(Math.sqrt(statW[2] / statWn))))
+            statW.fill(0.0); statWn = 0
             statDrops = 0; statMaxDt = 0; statDtSum = 0; statDtN = 0
         }
     }
@@ -372,6 +402,53 @@ class StabPipeline(
         histIdx = cur
         hasHist = true
         return true
+    }
+
+    private fun calibStep(c: Calib, ts: Long) {
+        if (grayProg == 0) {
+            grayProg = Shaders.gray()
+            val t = IntArray(1); GLES20.glGenTextures(1, t, 0); grayTex = t[0]
+            GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, grayTex)
+            GLES30.glTexImage2D(GLES20.GL_TEXTURE_2D, 0, GLES30.GL_RGBA8, cw, ch, 0, GLES20.GL_RGBA, GLES20.GL_UNSIGNED_BYTE, null)
+            GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MIN_FILTER, GLES20.GL_LINEAR)
+            GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MAG_FILTER, GLES20.GL_LINEAR)
+            val f = IntArray(1); GLES30.glGenFramebuffers(1, f, 0); grayFbo = f[0]
+            GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, grayFbo)
+            GLES30.glFramebufferTexture2D(GLES30.GL_FRAMEBUFFER, GLES30.GL_COLOR_ATTACHMENT0, GLES20.GL_TEXTURE_2D, grayTex, 0)
+        }
+        GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, grayFbo)
+        GLES20.glViewport(0, 0, cw, ch)
+        GLES20.glUseProgram(grayProg)
+        GLES20.glActiveTexture(GLES20.GL_TEXTURE0); GLES20.glBindTexture(GL_TEXTURE_EXTERNAL_OES, tex)
+        GLES20.glUniform1i(GLES20.glGetUniformLocation(grayProg, "uCur"), 0)
+        GLES20.glEnableVertexAttribArray(0); GLES20.glVertexAttribPointer(0, 2, GLES20.GL_FLOAT, false, 0, quad)
+        GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP, 0, 4)
+        grayBuf.clear()
+        GLES20.glReadPixels(0, 0, cw, ch, GLES20.GL_RGBA, GLES20.GL_UNSIGNED_BYTE, grayBuf)
+        GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, 0)
+        val cur = ByteArray(cw * ch) { grayBuf.get(it * 4) }
+        c.frames++
+        val prev = c.prev
+        if (prev != null) {
+            val s = AxisCalibrator.shift(prev, cur, cw, ch)
+            val d = gyro.integrateRaw(c.prevTs, ts)
+            if (s != null && (Math.abs(s[0]) + Math.abs(s[1])) > 0.25 && Math.abs(d[0]) + Math.abs(d[1]) + Math.abs(d[2]) > 2e-4) {
+                // GL rows run bottom-up: flip the vertical flow into top-down sensor coordinates
+                c.flows += doubleArrayOf(s[0] * width / cw, -s[1] * height / ch)
+                c.disp += d
+            }
+        }
+        c.prev = cur; c.prevTs = ts
+        if (c.frames >= 260) {
+            calib = null
+            if (c.flows.size < 25) c.cb(null, "Мало движения или нет деталей в кадре (${c.flows.size} измерений). Потрясите сильнее и наведите на сцену с текстурой.")
+            else {
+                val z = zoom
+                val r = AxisCalibrator.solve(c.flows, c.disp, k[0] * z.toDouble(), k[1] * z.toDouble(), listOf("-y", "-x", "-z"))
+                Logger.i(TAG, "Калибровка осей: лучший ${r.best.axes} (${"%.2f".format(r.best.score)}), второй ${r.second.axes} (${"%.2f".format(r.second.score)}), измерений ${c.flows.size}")
+                c.cb(r, "")
+            }
+        }
     }
 
     private fun draw(w: Int, h: Int, preview: Boolean, denoised: Boolean) {

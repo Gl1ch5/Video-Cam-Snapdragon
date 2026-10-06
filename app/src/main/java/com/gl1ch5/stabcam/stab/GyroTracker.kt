@@ -42,6 +42,23 @@ class GyroTracker(private val ctx: Context, axes: List<String>) : SensorEventLis
     private var logW = FloatArray(0)
     private var logN = 0
 
+    /** Integral of the raw device-frame rates over (t0, t1] in rad, from the short always-on ring. */
+    @Synchronized fun integrateRaw(t0: Long, t1: Long): DoubleArray {
+        val out = DoubleArray(3)
+        val n = minOf(rawCount, rawN.toLong())
+        var prev = -1L
+        for (k in n downTo 1) {
+            val i = ((rawCount - k) % rawN).toInt()
+            val t = rawT[i]
+            if (t < t0) { prev = t; continue }
+            if (t > t1) break
+            val dt = if (prev >= 0) (t - prev) / 1e9 else 0.0
+            for (a in 0..2) out[a] += rawW[i * 3 + a] * dt
+            prev = t
+        }
+        return out
+    }
+
     /** Starts the full log, pre-seeded with the last ~0.4 s so the clip start is covered. */
     @Synchronized fun startLog() {
         logT = LongArray(1 shl 14); logW = FloatArray((1 shl 14) * 3); logN = 0
