@@ -104,6 +104,44 @@ class SettingsActivity : Activity() {
             button("Копировать") { copy("config", repo.effectiveJson().toString(2)) },
         )
 
+        section("Лаборатория vendor-ключей")
+        caption("Ключи OnePlus/Qualcomm из отчёта ниже. Задайте ключ и число (пробуйте 0, 1, 2, 3), затем откройте камеру и проверьте стабилизацию.")
+        val keyEdit = EditText(this).apply {
+            setText("com.oplus.video.stabilization.mode")
+            typeface = Typeface.MONOSPACE
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+            setTextColor(getColor(R.color.text))
+        }
+        val valEdit = EditText(this).apply {
+            setText("1")
+            hint = "значение"
+            inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_SIGNED
+            setTextColor(getColor(R.color.text))
+        }
+        content.addView(keyEdit, matchWrap())
+        content.addView(valEdit, matchWrap())
+        row(
+            button("Применить") {
+                val v = valEdit.text.toString().toIntOrNull() ?: return@button toast("Нужно число")
+                val root = repo.userOverrides()
+                val cam = root.optJSONObject("camera") ?: JSONObject().also { root.put("camera", it) }
+                val old = cam.optJSONArray("vendorTags") ?: org.json.JSONArray()
+                val list = org.json.JSONArray()
+                for (i in 0 until old.length()) if (old.getJSONObject(i).optString("name") != keyEdit.text.toString()) list.put(old.getJSONObject(i))
+                list.put(JSONObject().put("name", keyEdit.text.toString().trim()).put("type", "int").put("value", v))
+                cam.put("vendorTags", list)
+                repo.saveUserOverrides(root)
+                toast("Ключ задан, откройте камеру")
+                build()
+            },
+            button("Убрать все ключи") {
+                val root = repo.userOverrides()
+                root.optJSONObject("camera")?.remove("vendorTags")
+                repo.saveUserOverrides(root)
+                build()
+            },
+        )
+
         section("Итоговый конфиг")
         effectiveView = mono(eff.toString(2))
 
