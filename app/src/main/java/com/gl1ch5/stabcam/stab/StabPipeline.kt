@@ -27,6 +27,9 @@ class StabPipeline(
     private val params: Stabilizer.Params,
     private val crop: Float,
     private val readoutDefaultNs: Long,
+    /** Output sharpening 0..1 (limited unsharp mask) and bicubic (Catmull-Rom) resampling. */
+    private val sharpen: Float = 0.35f,
+    private val bicubic: Boolean = true,
 ) {
     private val thread = HandlerThread("stab-gl", android.os.Process.THREAD_PRIORITY_DISPLAY).also { it.start() }
     private val handler = Handler(thread.looper)
@@ -99,7 +102,7 @@ class StabPipeline(
         st.setOnFrameAvailableListener({ if (!released) handler.post { drawFrame() } }, handler)
         cameraSurface = Surface(st)
         program = buildProgram()
-        for (n in listOf("uTex", "uST", "uSize", "uK", "uZoom", "uCrop", "uPreview", "uR")) loc[n] = GLES20.glGetUniformLocation(program, n)
+        for (n in listOf("uTex", "uST", "uSize", "uK", "uZoom", "uCrop", "uPreview", "uSharp", "uBicubic", "uR")) loc[n] = GLES20.glGetUniformLocation(program, n)
         Logger.i(TAG, "GL готов: ${GLES20.glGetString(GLES20.GL_RENDERER)}, ${GLES20.glGetString(GLES20.GL_VERSION)}, буфер ${width}x$height")
     }
 
@@ -221,6 +224,8 @@ class StabPipeline(
         GLES20.glUniform4f(loc["uK"]!!, k[0] * z, k[1] * z, cx, cy)
         GLES20.glUniform1f(loc["uZoom"]!!, if (enabled) crop else 1f)
         GLES20.glUniform1i(loc["uPreview"]!!, if (preview) 1 else 0)
+        GLES20.glUniform1f(loc["uSharp"]!!, sharpen)
+        GLES20.glUniform1i(loc["uBicubic"]!!, if (bicubic) 1 else 0)
         GLES30.glUniformMatrix3fv(loc["uR"]!!, Stabilizer.ROWS, false, rows, 0)
         GLES20.glEnableVertexAttribArray(0)
         GLES20.glVertexAttribPointer(0, 2, GLES20.GL_FLOAT, false, 0, quad)
@@ -264,9 +269,36 @@ class StabPipeline(
             uniform float uZoom;
             uniform float uCrop;
             uniform int uPreview;
+            uniform float uSharp;
+            uniform int uBicubic;
             uniform mat3 uR[$rowsN];
             in vec2 vPos;
             out vec4 o;
+
+            vec3 fetch(vec2 q) {
+                vec4 tc = uST * vec4(q.x, 1.0 - q.y, 0.0, 1.0);
+                return texture(uTex, tc.xy).rgb;
+            }
+
+            // Catmull-Rom with 9 bilinear taps: keeps edges crisp after the warp (bilinear alone softens them).
+            vec3 catmull(vec2 q) {
+                vec2 pos = q * uSize;
+                vec2 c = floor(pos - 0.5) + 0.5;
+                vec2 f = pos - c;
+                vec2 w0 = f * (-0.5 + f * (1.0 - 0.5 * f));
+                vec2 w1 = 1.0 + f * f * (-2.5 + 1.5 * f);
+                vec2 w2 = f * (0.5 + f * (2.0 - 1.5 * f));
+                vec2 w3 = f * f * (-0.5 + 0.5 * f);
+                vec2 w12 = w1 + w2;
+                vec2 o12 = w2 / w12;
+                vec2 p0 = (c - 1.0) / uSize;
+                vec2 p3 = (c + 2.0) / uSize;
+                vec2 p12 = (c + o12) / uSize;
+                vec3 r = fetch(vec2(p0.x, p0.y)) * w0.x * w0.y + fetch(vec2(p12.x, p0.y)) * w12.x * w0.y + fetch(vec2(p3.x, p0.y)) * w3.x * w0.y
+                       + fetch(vec2(p0.x, p12.y)) * w0.x * w12.y + fetch(vec2(p12.x, p12.y)) * w12.x * w12.y + fetch(vec2(p3.x, p12.y)) * w3.x * w12.y
+                       + fetch(vec2(p0.x, p3.y)) * w0.x * w3.y + fetch(vec2(p12.x, p3.y)) * w12.x * w3.y + fetch(vec2(p3.x, p3.y)) * w3.x * w3.y;
+                return max(r, vec3(0.0));
+            }
             void main() {
                 // Output pixel in the sensor-oriented frame (preview is rotated 90° CW to portrait).
                 vec2 pos = (uPreview == 1) ? vec2(vPos.y, 1.0 - vPos.x) : vPos;
@@ -280,8 +312,21 @@ class StabPipeline(
                 vec3 s = R * d;
                 vec2 q = vec2(s.x / s.z * uK.x + uK.z, s.y / s.z * uK.y + uK.w) / uSize;
                 if (q.x < 0.0 || q.x > 1.0 || q.y < 0.0 || q.y > 1.0) { o = vec4(0.0, 0.0, 0.0, 1.0); return; }
-                vec4 tc = uST * vec4(q.x, 1.0 - q.y, 0.0, 1.0);
-                o = texture(uTex, tc.xy);
+                if (uPreview == 1 || uBicubic == 0) { o = vec4(fetch(q), 1.0); return; }
+                vec3 c = catmull(q);
+                if (uSharp > 0.0) {
+                    vec2 px = 1.0 / uSize;
+                    vec3 n = fetch(q + vec2(0.0, -px.y));
+                    vec3 s2 = fetch(q + vec2(0.0, px.y));
+                    vec3 e = fetch(q + vec2(px.x, 0.0));
+                    vec3 w = fetch(q + vec2(-px.x, 0.0));
+                    vec3 lo = min(min(n, s2), min(e, w));
+                    vec3 hi = max(max(n, s2), max(e, w));
+                    vec3 sh = c + uSharp * (c - 0.25 * (n + s2 + e + w));
+                    // Limited overshoot: no halos around edges.
+                    c = clamp(sh, min(lo, c) - 0.02, max(hi, c) + 0.02);
+                }
+                o = vec4(c, 1.0);
             }"""
         val p = GLES20.glCreateProgram()
         GLES20.glAttachShader(p, compile(GLES20.GL_VERTEX_SHADER, vs))

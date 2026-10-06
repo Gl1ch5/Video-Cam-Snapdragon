@@ -54,6 +54,8 @@ class AppConfig(val json: JSONObject) {
     val stabTauMax: Double = stab.optDouble("tauMaxMs", 350.0) / 1000
     val stabTauMin: Double = stab.optDouble("tauMinMs", 40.0) / 1000
     val stabVelTau: Double = stab.optDouble("velTauMs", 250.0) / 1000
+    val stabSharpen: Float = stab.optDouble("sharpen", 0.35).toFloat()
+    val stabBicubic: Boolean = stab.optBoolean("bicubic", true)
     val stabReadoutNs: Long = (stab.optDouble("readoutMs", 0.0) * 1e6).toLong()
     val gyroAxes: List<String> = buildList {
         val a = stab.optJSONArray("gyroAxes") ?: return@buildList
@@ -66,12 +68,12 @@ class AppConfig(val json: JSONObject) {
 }
 
 enum class Quality(val id: String, val width: Int, val height: Int, val fps: Int, val label: String, val defaultMbps: Double) {
-    UHD120("4K120", 3840, 2160, 120, "4K·120", 150.0),
-    UHD60("4K60", 3840, 2160, 60, "4K·60", 120.0),
-    UHD30("4K30", 3840, 2160, 30, "4K·30", 80.0),
-    K33_60("3.3K60", 3280, 1856, 60, "3.3K·60", 70.0),
-    FHD60("1080p60", 1920, 1080, 60, "1080·60", 40.0),
-    FHD30("1080p30", 1920, 1080, 30, "1080·30", 24.0);
+    UHD120("4K120", 3840, 2160, 120, "4K·120", 100.0),
+    UHD60("4K60", 3840, 2160, 60, "4K·60", 80.0),
+    UHD30("4K30", 3840, 2160, 30, "4K·30", 50.0),
+    K33_60("3.3K60", 3280, 1856, 60, "3.3K·60", 55.0),
+    FHD60("1080p60", 1920, 1080, 60, "1080·60", 25.0),
+    FHD30("1080p30", 1920, 1080, 30, "1080·30", 15.0);
 
     /** >60 fps goes through a Camera2 constrained high-speed session. */
     val highSpeed: Boolean get() = fps > 60

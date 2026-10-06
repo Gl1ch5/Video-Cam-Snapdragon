@@ -1,6 +1,6 @@
 {
   "name": "OnePlus 15R",
-  "description": "OnePlus на Snapdragon (15R и близкие). 4K60 HEVC 120 Мбит/с, OIS вкл, стоковый EIS выкл, мягкий шумодав.",
+  "description": "OnePlus на Snapdragon (15R и близкие). HEVC, OIS вкл, стоковый EIS выкл, лёгкие файлы (4K60 ~80 Мбит/с).",
   "priority": 20,
   "match": {
     "manufacturer": [
@@ -12,10 +12,10 @@
       "quality": "4K60",
       "codec": "hevc",
       "bitrateMbps": {
-        "4K60": 120,
-        "4K30": 80,
-        "1080p60": 45,
-        "1080p30": 28
+        "4K60": 80,
+        "4K30": 50,
+        "1080p60": 25,
+        "1080p30": 15
       }
     },
     "camera": {

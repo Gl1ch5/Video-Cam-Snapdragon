@@ -53,8 +53,19 @@ class StabRecorder(
             setInteger(MediaFormat.KEY_BITRATE_MODE, MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_VBR)
             setInteger(MediaFormat.KEY_PRIORITY, 0)
         }
-        videoEnc = MediaCodec.createEncoderByType(mime)
-        videoEnc.configure(fmt, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
+        // B-frames give ~10-15% better quality per bit; not every encoder accepts them, so fall back.
+        var enc = MediaCodec.createEncoderByType(mime)
+        try {
+            val withB = MediaFormat(fmt).apply { setInteger(MediaFormat.KEY_MAX_B_FRAMES, 2) }
+            enc.configure(withB, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
+            Logger.i(TAG, "B-кадры включены")
+        } catch (e: Exception) {
+            Logger.w(TAG, "B-кадры не поддерживаются, без них", e)
+            runCatching { enc.release() }
+            enc = MediaCodec.createEncoderByType(mime)
+            enc.configure(fmt, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
+        }
+        videoEnc = enc
         inputSurface = videoEnc.createInputSurface()
         videoEnc.start()
         Logger.i(TAG, "Видеоэнкодер ${videoEnc.name} ${width}x$height@$fps ${bitrate / 1_000_000} Мбит/с")
