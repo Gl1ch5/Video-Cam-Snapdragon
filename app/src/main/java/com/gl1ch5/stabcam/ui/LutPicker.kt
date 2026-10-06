@@ -39,6 +39,7 @@ class LutPicker(
         val rows = buildList {
             add(Row("", "Без LUT", "оригинальные цвета"))
             Luts.builtin.forEach { add(Row(it.id, it.name, it.subtitle)) }
+            runCatching { com.gl1ch5.stabcam.module.ModuleManager(ctx).lutEntries() }.getOrDefault(emptyList()).forEach { add(Row(it.id, it.name, it.subtitle)) }
             Luts.userEntries(ctx).forEach { add(Row(it.id, it.name, it.subtitle)) }
         }
         rows.forEachIndexed { i, r ->

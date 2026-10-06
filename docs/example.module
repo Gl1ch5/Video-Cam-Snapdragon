@@ -1,0 +1,15 @@
+{
+  "module": 1,
+  "id": "user.cinema-walk",
+  "name": "Кино: прогулка",
+  "author": "StabCam",
+  "version": "1.0",
+  "description": "Мягкая сильная стабилизация, чистая картинка и тёплый кинематографичный цвет.",
+  "config": {
+    "stab": { "tauMaxMs": 800, "crop": 1.16, "denoise": 0.6, "sharpen": 0.3 },
+    "video": { "lut": "cinema", "lutStrength": 0.85 }
+  },
+  "presets": [
+    { "name": "Лёгкий день", "config": { "stab": { "tauMaxMs": 350, "crop": 1.08 }, "video": { "lut": "rich" } } }
+  ]
+}

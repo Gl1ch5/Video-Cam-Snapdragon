@@ -30,6 +30,7 @@ import com.gl1ch5.stabcam.camera.CameraCaps
 import com.gl1ch5.stabcam.config.ConfigRepository
 import com.gl1ch5.stabcam.config.Presets
 import com.gl1ch5.stabcam.lut.Luts
+import com.gl1ch5.stabcam.module.ModuleManager
 import com.gl1ch5.stabcam.stab.GyroTracker
 import com.gl1ch5.stabcam.update.Updater
 import org.json.JSONArray
@@ -46,15 +47,21 @@ class SettingsActivity : Activity() {
     private lateinit var content: LinearLayout
     private lateinit var scroll: ScrollView
     private lateinit var tabViews: List<TextView>
-    private var tab = lastTab
+    private var tab = 0
+    private var simple = false
+    private lateinit var mods: ModuleManager
     private lateinit var lutPicker: LutPicker
 
     private val accent get() = getColor(R.color.accent)
-    private val tabs = listOf("Видео", "Стабилизация", "Цвет", "Система", "Продвинутые")
+    private lateinit var tabs: List<String>
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         repo = ConfigRepository(this)
+        mods = ModuleManager(this)
+        simple = repo.load().simpleMode
+        tabs = if (simple) listOf("Главное", "Моды") else listOf("Видео", "Стабилизация", "Цвет", "Моды", "Система", "Продвинутые")
+        tab = tabs.indexOf(lastTab).coerceAtLeast(0)
         lutPicker = LutPicker(this, { id -> repo.set("video.lut", id); show(tab) }, {
             startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("*/*"), REQ_LUT)
         })
@@ -86,12 +93,17 @@ class SettingsActivity : Activity() {
         setContentView(root)
         paintTabs(false)
         show(tab)
+        intent?.takeIf { it.action == Intent.ACTION_VIEW }?.data?.let { uri ->
+            val mi = tabs.indexOf("Моды")
+            if (mi >= 0 && tab != mi) { tab = mi; lastTab = "Моды"; paintTabs(false); show(mi) }
+            installFromUri(uri)
+        }
     }
 
     private fun select(i: Int) {
         if (i == tab) return
         tab = i
-        lastTab = i
+        lastTab = tabs[i]
         paintTabs(true)
         content.animate().alpha(0f).translationY(dp(8).toFloat()).setDuration(110).withEndAction {
             show(i)
@@ -118,11 +130,13 @@ class SettingsActivity : Activity() {
     private fun show(i: Int) {
         content.removeAllViews()
         val eff = repo.effectiveJson()
-        when (i) {
-            0 -> video(eff)
-            1 -> stabilization(eff)
-            2 -> color(eff)
-            3 -> system()
+        when (tabs[i]) {
+            "Главное" -> home(eff)
+            "Видео" -> video(eff)
+            "Стабилизация" -> stabilization(eff)
+            "Цвет" -> color(eff)
+            "Моды" -> modules()
+            "Система" -> system()
             else -> advanced(eff)
         }
     }
@@ -130,6 +144,128 @@ class SettingsActivity : Activity() {
     // ---------------------------------------------------------------------------------------------------------
     // tabs
     // ---------------------------------------------------------------------------------------------------------
+
+    private fun modeChoice() {
+        choice("Режим интерфейса", listOf("Простой", "Про"), if (simple) 0 else 1) { repo.set("ui.mode", if (it == 0) "simple" else "pro"); recreate() }
+    }
+
+    /** Simple mode: a handful of big, friendly choices. */
+    private fun home(e: JSONObject) {
+        section("Съёмка")
+        val qIds = listOf("4K60", "4K30", "1080p60")
+        choice("Качество", listOf("4K · 60", "4K · 30", "Full HD · 60"), qIds.indexOf(str(e, "video.quality")).let { if (it < 0) 0 else it }) { repo.set("video.quality", qIds[it]) }
+        val stabIdx = if (!bool(e, "stab.enabled", true)) 0 else if (Presets.indexOf(Presets.strength, e) >= 2) 2 else 1
+        choice("Стабилизация", listOf("Выкл", "Обычная", "Сильная"), stabIdx) {
+            repo.set("stab.enabled", it != 0)
+            if (it == 1) Presets.apply(repo, Presets.strength[1]) else if (it == 2) Presets.apply(repo, Presets.strength[2])
+        }
+        choice("Чистота картинки", listOf("Обычная", "Чище", "Максимум"), when { num(e, "stab.denoise", 0.5) >= 0.7 -> 2; num(e, "stab.denoise", 0.5) >= 0.45 -> 1; else -> 0 }) {
+            Presets.apply(repo, Presets.denoise[intArrayOf(1, 2, 3)[it]]); Presets.apply(repo, Presets.sharpen[intArrayOf(1, 2, 3)[it]])
+        }
+        toggle("HDR (HLG)", "Ярче и глубже на HDR-экранах.", bool(e, "video.hdr", false, "hlg10")) { repo.set("video.hdr", if (it) "hlg10" else "off") }
+        section("Цвет")
+        val id = str(e, "video.lut")
+        action("Стиль", if (id.isEmpty()) "Без LUT" else (Luts.builtin.firstOrNull { it.id == id }?.name ?: id.substringAfterLast('/')), "Выбрать") { anchor -> lutPicker.show(anchor, id) }
+        section("Интерфейс")
+        modeChoice()
+        note("«Про» показывает все настройки и кнопки на экране камеры.")
+    }
+
+    // ---- modules -------------------------------------------------------------------------------------------
+
+    private fun modules() {
+        section("Мод с помощью нейросети")
+        action("Скопировать промпт для нейросети", "Вставьте в ИИ и опишите нужный мод", "Копировать") { copy("prompt", ModuleManager.aiPrompt()) }
+        action("Вставить мод из буфера", "Готовый JSON от нейросети — одним нажатием", "Вставить") {
+            val t = getSystemService(ClipboardManager::class.java).primaryClip?.getItemAt(0)?.coerceToText(this)?.toString().orEmpty()
+            if (t.isBlank()) toast("Буфер пуст") else installFromText(t)
+        }
+        note("1. Нажмите «Скопировать промпт». 2. Вставьте его в нейросеть и допишите, какой мод нужен. 3. Скопируйте ответ и нажмите «Вставить мод из буфера».")
+        section("Установка")
+        action("Установить из файла", "Файл .module", "Выбрать") {
+            startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("*/*"), REQ_MOD)
+        }
+        action("Вставить ссылку", "https://…/мод.module", "Указать") { askUrl() }
+        note("Мод может поменять настройки (качество, стабилизацию, шумоподавление, цвет), добавить свои LUT-ы и пресеты. Кода в модах нет: менять можно только разрешённые настройки, перед установкой показывается список изменений.")
+
+        section("Установленные")
+        val list = mods.list()
+        if (list.isEmpty()) note("Пока ничего не установлено.")
+        list.forEach { m ->
+            val card = cardRow()
+            val line = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+            val texts = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+            texts.addView(titleView(m.name))
+            texts.addView(subView("v${m.version}" + (if (m.author.isNotEmpty()) " · ${m.author}" else "") + (if (m.lutCount > 0) " · LUT: ${m.lutCount}" else "") + (if (m.presetCount > 0) " · пресетов: ${m.presetCount}" else "")))
+            line.addView(texts, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            line.addView(Switch(this).apply {
+                isChecked = m.enabled
+                thumbTintList = ColorStateList(arrayOf(intArrayOf(android.R.attr.state_checked), intArrayOf()), intArrayOf(accent, 0xFFBBBBBB.toInt()))
+                trackTintList = ColorStateList(arrayOf(intArrayOf(android.R.attr.state_checked), intArrayOf()), intArrayOf(0x66FFB020, 0x44FFFFFF))
+                setOnCheckedChangeListener { _, c -> mods.setEnabled(m.id, c); show(tab) }
+            })
+            card.addView(line)
+            if (m.description.isNotEmpty()) card.addView(subView(m.description))
+            card.addView(TextView(this).apply {
+                text = "Удалить"; setTextColor(0xFFFF6B6B.toInt()); setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f); setPadding(0, dp(10), 0, 0)
+                setOnClickListener { mods.remove(m.id); toast("Удалён: ${m.name}"); show(tab) }
+            })
+        }
+        val presets = mods.presets()
+        if (presets.isNotEmpty()) {
+            section("Пресеты из модов")
+            presets.forEach { (name, cfg) ->
+                action(name, null, "Применить") { applyConfig(cfg); toast("Применён: $name") }
+            }
+        }
+        section("Создать")
+        action("Поделиться моим стилем", "Экспорт текущих настроек в .module", "Экспорт") {
+            val j = mods.exportCurrent(repo.effectiveJson(), "Мои настройки").toString(2)
+            copy("module", j)
+            startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, j), "Мод StabCam"))
+        }
+    }
+
+    private fun applyConfig(cfg: JSONObject, prefix: String = "") {
+        for (k in cfg.keys()) {
+            val v = cfg.get(k); val path = if (prefix.isEmpty()) k else "$prefix.$k"
+            if (v is JSONObject && path != "video.bitrateMbps") applyConfig(v, path) else repo.set(path, v)
+        }
+    }
+
+    private fun installFromUri(uri: android.net.Uri) = thread {
+        val t = runCatching { contentResolver.openInputStream(uri)!!.bufferedReader().use { it.readText() } }.getOrNull()
+        runOnUiThread { if (t == null) toast("Не удалось прочитать файл") else installFromText(t) }
+    }
+
+    private fun askUrl() {
+        val et = EditText(this).apply { hint = "https://…"; setTextColor(Color.WHITE); setHintTextColor(0x66FFFFFF); setPadding(dp(20), dp(12), dp(20), dp(12)) }
+        android.app.AlertDialog.Builder(this).setTitle("Ссылка на .module").setView(et)
+            .setPositiveButton("Скачать") { _, _ ->
+                val url = et.text.toString().trim()
+                if (!url.startsWith("https://")) { toast("Нужна ссылка https://"); return@setPositiveButton }
+                thread {
+                    val t = runCatching {
+                        val c = java.net.URL(url).openConnection() as java.net.HttpURLConnection
+                        c.connectTimeout = 10_000; c.readTimeout = 15_000
+                        c.inputStream.use { it.readNBytes(6_000_001).toString(Charsets.UTF_8) }
+                    }.getOrNull()
+                    runOnUiThread { if (t == null) toast("Не удалось скачать") else installFromText(t) }
+                }
+            }.setNegativeButton("Отмена", null).show()
+    }
+
+    /** Validates, shows what the module changes, installs on confirm. */
+    private fun installFromText(text: String) {
+        when (val r = mods.check(text)) {
+            is ModuleManager.Result.Error -> android.app.AlertDialog.Builder(this).setTitle("Мод не подошёл").setMessage(r.message).setPositiveButton("OK", null).show()
+            is ModuleManager.Result.Ok -> android.app.AlertDialog.Builder(this)
+                .setTitle("Установить «${r.module.name}»?")
+                .setMessage((if (r.module.author.isNotEmpty()) "Автор: ${r.module.author}\n" else "") + r.module.description + "\n\nИзменит:\n• " + r.summary.joinToString("\n• "))
+                .setPositiveButton("Установить") { _, _ -> mods.install(r.module); toast("Установлен: ${r.module.name}"); show(tab) }
+                .setNegativeButton("Отмена", null).show()
+        }
+    }
 
     private fun video(e: JSONObject) {
         section("Запись")
@@ -165,6 +301,7 @@ class SettingsActivity : Activity() {
     }
 
     private fun system() {
+        modeChoice()
         section("Обновления")
         val updStatus = note("Автопроверка при запуске: ${if (repo.load().updateAuto) "вкл" else "выкл"}")
         toggle("Автообновление", null, repo.load().updateAuto) { repo.set("update.auto", it) }
@@ -265,6 +402,7 @@ class SettingsActivity : Activity() {
     @Deprecated("Deprecated in Java")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == REQ_MOD && resultCode == RESULT_OK) { data?.data?.let { installFromUri(it) }; return }
         if (requestCode != REQ_LUT || resultCode != RESULT_OK) return
         val uri = data?.data ?: return
         thread {
@@ -420,6 +558,7 @@ class SettingsActivity : Activity() {
 
     companion object {
         private const val REQ_LUT = 42
-        private var lastTab = 0
+        private const val REQ_MOD = 43
+        private var lastTab = ""
     }
 }

@@ -42,6 +42,7 @@ object Luts {
     /** Resolves "rich", "file:name.cube" or "" (none). */
     fun resolve(ctx: Context, id: String): Lut? = when {
         id.isEmpty() || id == "off" -> null
+        id.startsWith("mod:") -> runCatching { com.gl1ch5.stabcam.module.ModuleManager(ctx).lut(id) }.getOrNull()
         id.startsWith("file:") -> runCatching {
             parseCube(id, File(userDir(ctx), id.removePrefix("file:")).let { it.nameWithoutExtension }, File(userDir(ctx), id.removePrefix("file:")).readText())
         }.onFailure { Logger.e("LUT", "Не удалось прочитать $id", it) }.getOrNull()

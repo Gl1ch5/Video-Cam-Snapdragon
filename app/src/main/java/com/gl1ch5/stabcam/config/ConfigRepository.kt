@@ -61,6 +61,7 @@ class ConfigRepository(private val ctx: Context) {
     fun effectiveJson(): JSONObject {
         val merged = defaults()
         activePreset?.let { deepMerge(merged, it.config) }
+        runCatching { deepMerge(merged, com.gl1ch5.stabcam.module.ModuleManager(ctx).configPatch()) }
         deepMerge(merged, userOverrides())
         return merged
     }

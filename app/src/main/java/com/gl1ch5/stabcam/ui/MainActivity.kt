@@ -466,6 +466,9 @@ class MainActivity : Activity(), VideoCamera.Listener {
 
     private fun updateUi() {
         val c = caps ?: return
+        val simple = cfg.simpleMode
+        listOf(btnOis, btnEis, btnHdr, btnEv).forEach { it.visibility = if (simple) View.GONE else View.VISIBLE }
+        setTextFade(btnStab, if (simple) "Стаб" else "STAB")
         styleToggle(btnOis, controls.ois, true)
         styleToggle(btnEis, controls.stockEis && c.hasStockEis, c.hasStockEis)
         styleToggle(btnStab, controls.stab && c.facingBack && !cfg.postMode, c.facingBack && !cfg.postMode)
@@ -582,7 +585,17 @@ class MainActivity : Activity(), VideoCamera.Listener {
             needReopen = true
         }
         fun label(levels: List<Presets.Level>) = levels[Presets.indexOf(levels, repo.effectiveJson())].label
-        val items = listOf(
+        val items = if (cfg.simpleMode) listOf(
+            QuickMenu.Item("Качество", { quality.label }, {
+                val c = caps ?: return@Item
+                val list = c.qualities(cfg.forceAllQualities)
+                if (list.isNotEmpty()) { quality = list[(list.indexOf(quality) + 1) % list.size]; repo.set("video.quality", quality.id); cfg = repo.load(); needReopen = true }
+            }),
+            QuickMenu.Item("Стабилизация", { label(Presets.strength) }, { cycle(Presets.strength) }),
+            QuickMenu.Item("LUT", { if (cfg.lutId.isEmpty()) "нет" else lutTitle(cfg.lutId) }, { main.postDelayed({ lutPicker.show(btnLut, cfg.lutId) }, 120) }, closeOnTap = true),
+            QuickMenu.Item("Режим", { "Простой" }, { repo.set("ui.mode", "pro"); cfg = repo.load(); needReopen = true; updateUi() }),
+            QuickMenu.Item("Все настройки  ›", { "" }, { startActivity(Intent(this, SettingsActivity::class.java)) }, closeOnTap = true, accent = true),
+        ) else listOf(
             QuickMenu.Item("Качество", { quality.label }, {
                 val c = caps ?: return@Item
                 val list = c.qualities(cfg.forceAllQualities)
@@ -599,6 +612,7 @@ class MainActivity : Activity(), VideoCamera.Listener {
             QuickMenu.Item("LUT", { if (cfg.lutId.isEmpty()) "нет" else lutTitle(cfg.lutId) }, {
                 main.postDelayed({ lutPicker.show(btnLut, cfg.lutId) }, 120)
             }, closeOnTap = true),
+            QuickMenu.Item("Режим", { "Про" }, { repo.set("ui.mode", "simple"); cfg = repo.load(); updateUi() }),
             QuickMenu.Item("Все настройки  ›", { "" }, { startActivity(Intent(this, SettingsActivity::class.java)) }, closeOnTap = true, accent = true),
         )
         needReopen = false

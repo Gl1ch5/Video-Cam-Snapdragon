@@ -74,6 +74,8 @@ class AppConfig(val json: JSONObject) {
     val postBitrateFactor: Double = json.optJSONObject("post")?.optDouble("bitrateFactor", 1.5) ?: 1.5
     val postExportGcsv: Boolean = json.optJSONObject("post")?.optBoolean("exportGcsv", true) ?: true
 
+    val simpleMode: Boolean = ui.optString("mode", "pro") == "simple"
+
     val showInfo: Boolean = ui.optBoolean("showInfo", false)
 
     data class VendorTag(val name: String, val type: String, val value: Any?)

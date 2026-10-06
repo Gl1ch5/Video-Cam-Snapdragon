@@ -29,7 +29,8 @@
     "vendorTags": []
   },
   "ui": {
-    "showInfo": false
+    "showInfo": false,
+    "mode": "pro"
   },
   "update": {
     "auto": true,
