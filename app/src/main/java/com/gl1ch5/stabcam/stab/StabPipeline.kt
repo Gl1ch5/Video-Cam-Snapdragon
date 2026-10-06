@@ -43,7 +43,12 @@ class StabPipeline(
     var is10bit = false
         private set
     private val thread = HandlerThread("stab-gl", android.os.Process.THREAD_PRIORITY_DISPLAY).also { it.start() }
-    private val handler = Handler(thread.looper)
+    // A failure inside any GL task must never kill the app: log it and keep going.
+    private val handler = object : Handler(thread.looper) {
+        override fun dispatchMessage(msg: android.os.Message) {
+            try { super.dispatchMessage(msg) } catch (t: Throwable) { Logger.e(TAG, "GL поток", t) }
+        }
+    }
     private lateinit var egl: EglCore
     private lateinit var st: SurfaceTexture
     lateinit var cameraSurface: Surface

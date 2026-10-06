@@ -58,7 +58,11 @@ class VideoCamera(private val ctx: Context, private val listener: Listener) {
     )
 
     private val thread = HandlerThread("camera").apply { start() }
-    private val handler = Handler(thread.looper)
+    private val handler = object : Handler(thread.looper) {
+        override fun dispatchMessage(msg: android.os.Message) {
+            try { super.dispatchMessage(msg) } catch (t: Throwable) { Logger.e(TAG, "Камера", t) }
+        }
+    }
     private val executor = Executor { handler.post(it) }
     private val mgr = ctx.getSystemService(CameraManager::class.java)
 

@@ -18,6 +18,9 @@ object Logger {
 
     @Volatile var listener: ((String) -> Unit)? = null
 
+    /** Stack trace of the previous run if it died with an uncaught exception (cleared on read). */
+    @Volatile var previousCrash: String? = null
+
     @Synchronized
     fun init(ctx: Context) {
         if (file != null) return
@@ -25,7 +28,19 @@ object Logger {
         if (f.exists() && f.length() > MAX_FILE) f.renameTo(File(ctx.filesDir, "stabcam.old.log"))
         file = f
         // Keep the tail of the previous run (it may hold a crash trace).
-        runCatching { f.readLines().takeLast(400).forEach { lines.addLast(it) } }
+        runCatching {
+            val old = f.readLines()
+            old.takeLast(400).forEach { lines.addLast(it) }
+            val start = old.indexOfLast { it.contains("=== запуск") }
+            val crash = old.indexOfLast { it.contains("F/CRASH") }
+            if (crash > start) previousCrash = old.drop(crash).joinToString("\n").take(2500)
+            else if (start >= 0) {
+                // No Java trace: a native crash (GL/camera driver) leaves "opening camera" without "session configured".
+                val last = old.drop(start)
+                if (last.any { it.contains("Открываю камеру") } && last.none { it.contains("Сессия настроена") })
+                    previousCrash = "Нативный сбой (без трассы Java) или закрытие во время запуска камеры. Последние строки:\n" + last.takeLast(25).joinToString("\n").take(2500)
+            }
+        }
         val prev = Thread.getDefaultUncaughtExceptionHandler()
         Thread.setDefaultUncaughtExceptionHandler { t, e ->
             runCatching { f.appendText("${fmt.format(Date())} F/CRASH: поток ${t.name}\n${Log.getStackTraceString(e)}\n") }

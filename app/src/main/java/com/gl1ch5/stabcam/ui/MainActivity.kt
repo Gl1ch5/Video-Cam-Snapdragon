@@ -92,11 +92,18 @@ class MainActivity : Activity(), VideoCamera.Listener {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         Logger.init(this)
-        setContentView(R.layout.activity_main)
         repo = ConfigRepository(this)
+        // The previous run crashed: start in safe mode (no GL stabilisation, no HDR) and show why.
+        val crash = Logger.previousCrash
+        if (crash != null) {
+            Logger.previousCrash = null
+            runCatching { repo.set("stab.enabled", false); repo.set("video.hdr", "off") }
+        }
+        setContentView(R.layout.activity_main)
         camera = VideoCamera(this, this)
         bindViews()
         loadConfig()
+        if (crash != null) main.post { showCrash(crash) }
 
         preview.holder.addCallback(object : SurfaceHolder.Callback {
             override fun surfaceCreated(holder: SurfaceHolder) {}
@@ -551,6 +558,19 @@ class MainActivity : Activity(), VideoCamera.Listener {
             val bmp: Bitmap? = runCatching { contentResolver.loadThumbnail(uri, Size(256, 256), null) }.getOrNull()
             runOnUiThread { bmp?.let { thumb.setImageBitmap(it) } }
         }
+    }
+
+    private fun showCrash(trace: String) {
+        android.app.AlertDialog.Builder(this)
+            .setTitle("Прошлый запуск завершился ошибкой")
+            .setMessage("Включён безопасный режим: STAB и HLG выключены (включаются кнопками). Текст ошибки:\n\n$trace")
+            .setPositiveButton("Копировать") { _, _ ->
+                getSystemService(android.content.ClipboardManager::class.java)
+                    .setPrimaryClip(android.content.ClipData.newPlainText("crash", trace))
+                toast("Скопировано")
+            }
+            .setNegativeButton("Закрыть", null)
+            .show()
     }
 
     private fun runProbe() {
