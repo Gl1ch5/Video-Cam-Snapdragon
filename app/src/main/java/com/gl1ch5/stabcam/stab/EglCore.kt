@@ -9,7 +9,11 @@ import android.opengl.EGLSurface
 import android.view.Surface
 
 /** Minimal EGL14 wrapper: one GLES3 context, window/pbuffer surfaces, recordable config for MediaCodec. */
-class EglCore {
+class EglCore(wantHdr: Boolean = false) {
+    /** True if a 10-10-10-2 config was selected. */
+    var is10bit = false
+        private set
+    private var hlgExt = false
     private var display: EGLDisplay = EGL14.EGL_NO_DISPLAY
     private var context: EGLContext = EGL14.EGL_NO_CONTEXT
     private var config: EGLConfig? = null
@@ -19,22 +23,34 @@ class EglCore {
         check(display != EGL14.EGL_NO_DISPLAY) { "no EGL display" }
         val v = IntArray(2)
         check(EGL14.eglInitialize(display, v, 0, v, 1)) { "eglInitialize" }
-        val attribs = intArrayOf(
-            EGL14.EGL_RED_SIZE, 8, EGL14.EGL_GREEN_SIZE, 8, EGL14.EGL_BLUE_SIZE, 8, EGL14.EGL_ALPHA_SIZE, 8,
+        fun attribs(bits: Int, alpha: Int) = intArrayOf(
+            EGL14.EGL_RED_SIZE, bits, EGL14.EGL_GREEN_SIZE, bits, EGL14.EGL_BLUE_SIZE, bits, EGL14.EGL_ALPHA_SIZE, alpha,
             EGL14.EGL_RENDERABLE_TYPE, EGLExt.EGL_OPENGL_ES3_BIT_KHR,
             EGL_RECORDABLE_ANDROID, 1,
             EGL14.EGL_NONE,
         )
         val cfgs = arrayOfNulls<EGLConfig>(1)
         val num = IntArray(1)
-        check(EGL14.eglChooseConfig(display, attribs, 0, cfgs, 0, 1, num, 0) && num[0] > 0) { "eglChooseConfig" }
+        var ok = false
+        if (wantHdr) {
+            ok = EGL14.eglChooseConfig(display, attribs(10, 2), 0, cfgs, 0, 1, num, 0) && num[0] > 0
+            is10bit = ok
+        }
+        if (!ok) ok = EGL14.eglChooseConfig(display, attribs(8, 8), 0, cfgs, 0, 1, num, 0) && num[0] > 0
+        check(ok) { "eglChooseConfig" }
         config = cfgs[0]
+        hlgExt = (EGL14.eglQueryString(display, EGL14.EGL_EXTENSIONS) ?: "").contains("EGL_EXT_gl_colorspace_bt2020_hlg")
         context = EGL14.eglCreateContext(display, config, EGL14.EGL_NO_CONTEXT, intArrayOf(EGL14.EGL_CONTEXT_CLIENT_VERSION, 3, EGL14.EGL_NONE), 0)
         check(context != EGL14.EGL_NO_CONTEXT) { "eglCreateContext" }
     }
 
-    fun createWindowSurface(s: Surface): EGLSurface {
-        val surf = EGL14.eglCreateWindowSurface(display, config, s, intArrayOf(EGL14.EGL_NONE), 0)
+    fun createWindowSurface(s: Surface, hlg: Boolean = false): EGLSurface {
+        var surf = EGL14.EGL_NO_SURFACE
+        if (hlg && hlgExt) {
+            // Tags the buffer as BT.2020 HLG so the encoder/MediaCodec see the right colour space.
+            surf = EGL14.eglCreateWindowSurface(display, config, s, intArrayOf(EGL_GL_COLORSPACE_KHR, EGL_GL_COLORSPACE_BT2020_HLG_EXT, EGL14.EGL_NONE), 0)
+        }
+        if (surf == EGL14.EGL_NO_SURFACE) surf = EGL14.eglCreateWindowSurface(display, config, s, intArrayOf(EGL14.EGL_NONE), 0)
         check(surf != EGL14.EGL_NO_SURFACE) { "eglCreateWindowSurface" }
         return surf
     }
@@ -66,5 +82,9 @@ class EglCore {
         context = EGL14.EGL_NO_CONTEXT
     }
 
-    companion object { private const val EGL_RECORDABLE_ANDROID = 0x3142 }
+    companion object {
+        private const val EGL_RECORDABLE_ANDROID = 0x3142
+        private const val EGL_GL_COLORSPACE_KHR = 0x309D
+        private const val EGL_GL_COLORSPACE_BT2020_HLG_EXT = 0x3540
+    }
 }

@@ -13,7 +13,8 @@
     "audio": true,
     "audioBitrateKbps": 256,
     "audioSampleRate": 48000,
-    "audioChannels": 2
+    "audioChannels": 2,
+    "hdr": "off"
   },
   "camera": {
     "lens": "back",
@@ -40,7 +41,7 @@
     "enabled": true,
     "crop": 1.1,
     "maxAngleDeg": 4.0,
-    "tauMaxMs": 350,
+    "tauMaxMs": 500,
     "tauMinMs": 40,
     "readoutMs": 0,
     "gyroAxes": [
@@ -48,11 +49,12 @@
       "-x",
       "-z"
     ],
-    "velTauMs": 250,
+    "velTauMs": 300,
     "sharpen": 0.35,
     "bicubic": true,
     "previewRot": 1,
     "denoise": 0.5,
-    "denoiseSigma": 0.04
+    "denoiseSigma": 0.04,
+    "timeOffsetMs": 0
   }
 }

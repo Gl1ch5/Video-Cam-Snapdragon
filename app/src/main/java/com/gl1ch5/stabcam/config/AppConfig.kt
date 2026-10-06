@@ -43,6 +43,8 @@ class AppConfig(val json: JSONObject) {
     /** Offer every quality even if Camera2 does not advertise it (OEMs hide modes from third-party apps). */
     val forceAllQualities: Boolean = camera.optBoolean("forceAllQualities", false)
 
+    val hdr: Boolean = video.optString("hdr", "off") == "hlg10"
+    val stabTimeOffsetMs: Double = stab.optDouble("timeOffsetMs", 0.0)
     val updateAuto: Boolean = update.optBoolean("auto", true)
     val updateRepo: String = update.optString("repo", "Gl1ch5/Video-Cam-Snapdragon")
     val updateTag: String = update.optString("tag", "nightly")
@@ -51,9 +53,9 @@ class AppConfig(val json: JSONObject) {
     val stabEnabled: Boolean = stab.optBoolean("enabled", true)
     val stabCrop: Float = stab.optDouble("crop", 1.10).toFloat()
     val stabMaxAngle: Double = stab.optDouble("maxAngleDeg", 4.0)
-    val stabTauMax: Double = stab.optDouble("tauMaxMs", 350.0) / 1000
+    val stabTauMax: Double = stab.optDouble("tauMaxMs", 500.0) / 1000
     val stabTauMin: Double = stab.optDouble("tauMinMs", 40.0) / 1000
-    val stabVelTau: Double = stab.optDouble("velTauMs", 250.0) / 1000
+    val stabVelTau: Double = stab.optDouble("velTauMs", 300.0) / 1000
     val stabSharpen: Float = stab.optDouble("sharpen", 0.35).toFloat()
     val stabPreviewRot: Int = stab.optInt("previewRot", 1).coerceIn(1, 4)
     val stabDenoise: Float = stab.optDouble("denoise", 0.5).toFloat()

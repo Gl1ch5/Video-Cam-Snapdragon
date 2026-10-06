@@ -66,6 +66,11 @@ class CameraCaps(val id: String, val chars: CameraCharacteristics) {
         return floatArrayOf(fx * s, fy * s, (cx - offX) * s, (cy - offY) * s)
     }
 
+    /** 10-bit HLG camera streams (Android 13+). */
+    val supportsHlg10: Boolean = android.os.Build.VERSION.SDK_INT >= 33 &&
+        (chars.get(CameraCharacteristics.REQUEST_AVAILABLE_DYNAMIC_RANGE_PROFILES)?.supportedProfiles
+            ?.contains(android.hardware.camera2.params.DynamicRangeProfiles.HLG10) == true)
+
     fun supportsHighSpeed(q: Quality): Boolean {
         val size = Size(q.width, q.height)
         val sizes = runCatching { map.highSpeedVideoSizes }.getOrNull() ?: return false
@@ -120,6 +125,7 @@ class CameraCaps(val id: String, val chars: CameraCharacteristics) {
         appendLine("Hardware level: $level")
         appendLine("Sensor orientation: $sensorOrientation°")
         appendLine("Timestamp source: $tsSource")
+        appendLine("HLG10 (10-бит): ${if (supportsHlg10) "да" else "нет"}")
         appendLine("OIS: ${if (hasOis) "есть" else "нет"}   OIS data (STATISTICS_OIS_SAMPLES): ${if (hasOisData) "есть" else "нет"}")
         appendLine("Stock EIS modes: $eisModes")
         appendLine("Zoom ratio: ${zoomRange.lower}..${zoomRange.upper}")

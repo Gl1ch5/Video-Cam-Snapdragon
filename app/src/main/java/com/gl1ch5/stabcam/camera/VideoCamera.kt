@@ -167,7 +167,13 @@ class VideoCamera(private val ctx: Context, private val listener: Listener) {
             add(preview)
             if (withRecorder) recorder?.surface?.let { add(it) }
         }
-        val outputs = targets.map { OutputConfiguration(it) }
+        val outputs = targets.map { surf ->
+            OutputConfiguration(surf).also { oc ->
+                if (pipeline?.is10bit == true && android.os.Build.VERSION.SDK_INT >= 33) {
+                    oc.dynamicRangeProfile = android.hardware.camera2.params.DynamicRangeProfiles.HLG10
+                }
+            }
+        }
         val stateCb =
             object : CameraCaptureSession.StateCallback() {
                 override fun onConfigured(s: CameraCaptureSession) {
@@ -441,25 +447,28 @@ class VideoCamera(private val ctx: Context, private val listener: Listener) {
         val c = caps ?: return
         val cfg = config ?: return
         if (!(controls.stab && cfg.stabEnabled && c.facingBack && !quality.highSpeed)) return
-        try {
-            val g = GyroTracker(ctx, cfg.gyroAxes)
-            if (!g.start()) { Logger.e(TAG, "Стабилизация отключена: нет гироскопа"); return }
-            val k = c.intrinsicsFor(quality.width, quality.height)
-            val readout = if (cfg.stabReadoutNs > 0) cfg.stabReadoutNs else c.readoutNs ?: 8_000_000L
-            Logger.i(TAG, "Стабилизация: K=[${k.joinToString { "%.1f".format(it) }}] readout=${readout / 1000}мкс crop=${cfg.stabCrop} макс=${cfg.stabMaxAngle}°")
-            val p = StabPipeline(
-                g, quality.width, quality.height, k,
-                Stabilizer.Params(cfg.stabMaxAngle, cfg.stabTauMax, cfg.stabTauMin, cfg.stabVelTau), cfg.stabCrop, readout, cfg.stabSharpen, cfg.stabBicubic, cfg.stabDenoise, cfg.stabDenoiseSigma,
-            )
-            p.setZoom(controls.zoom)
-            p.previewRot = cfg.stabPreviewRot
-            p.setPreview(previewSurface)
-            gyro = g
-            pipeline = p
-        } catch (e: Exception) {
-            Logger.e(TAG, "Стабилизация не запустилась, обычный режим", e)
-            gyro?.stop(); gyro = null; pipeline = null
+        val hdr = cfg.hdr && c.supportsHlg10 && cfg.codec.equals("hevc", true)
+        val g = GyroTracker(ctx, cfg.gyroAxes)
+        if (!g.start()) { Logger.e(TAG, "Стабилизация отключена: нет гироскопа"); return }
+        val k = c.intrinsicsFor(quality.width, quality.height)
+        val readout = if (cfg.stabReadoutNs > 0) cfg.stabReadoutNs else c.readoutNs ?: 8_000_000L
+        Logger.i(TAG, "Стабилизация: K=[${k.joinToString { "%.1f".format(it) }}] readout=${readout / 1000}мкс crop=${cfg.stabCrop} макс=${cfg.stabMaxAngle}° сдвиг гиро=${cfg.stabTimeOffsetMs}мс HLG=$hdr")
+        fun make(h: Boolean) = StabPipeline(
+            g, quality.width, quality.height, k,
+            Stabilizer.Params(cfg.stabMaxAngle, cfg.stabTauMax, cfg.stabTauMin, cfg.stabVelTau), cfg.stabCrop, readout,
+            cfg.stabSharpen, cfg.stabBicubic, cfg.stabDenoise, cfg.stabDenoiseSigma, cfg.stabTimeOffsetMs, h,
+        )
+        val p = try { make(hdr) } catch (e: Exception) {
+            Logger.e(TAG, "Конвейер ${if (hdr) "10-бит" else ""} не запустился", e)
+            if (!hdr) { g.stop(); return }
+            try { make(false) } catch (e2: Exception) { Logger.e(TAG, "Стабилизация не запустилась, обычный режим", e2); g.stop(); return }
         }
+        p.setZoom(controls.zoom)
+        p.previewRot = cfg.stabPreviewRot
+        p.setPreview(previewSurface)
+        gyro = g
+        pipeline = p
+        Logger.i(TAG, "Конвейер: ${if (p.is10bit) "10-бит HLG" else "8-бит"}")
     }
 
     private fun startStab(orientationHint: Int) {
@@ -472,6 +481,7 @@ class VideoCamera(private val ctx: Context, private val listener: Listener) {
             val rec = StabRecorder(
                 pfd.fileDescriptor, q.width, q.height, q.fps, cfg.bitrateFor(q), hevc, orientationHint,
                 if (cfg.audio) StabRecorder.Audio(cfg.audioSampleRate, cfg.audioChannels, cfg.audioBitrate) else null,
+                p.is10bit,
             )
             p.startRecording(rec)
             stabRecording = true

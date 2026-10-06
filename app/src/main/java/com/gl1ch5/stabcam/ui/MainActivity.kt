@@ -53,6 +53,7 @@ class MainActivity : Activity(), VideoCamera.Listener {
     private lateinit var btnOis: TextView
     private lateinit var btnEis: TextView
     private lateinit var btnStab: TextView
+    private lateinit var btnHdr: TextView
     private lateinit var btnEv: TextView
     private lateinit var btnQuality: TextView
     private lateinit var btnSettings: ImageButton
@@ -131,6 +132,7 @@ class MainActivity : Activity(), VideoCamera.Listener {
         btnOis = findViewById(R.id.btnOis)
         btnEis = findViewById(R.id.btnEis)
         btnStab = findViewById(R.id.btnStab)
+        btnHdr = findViewById(R.id.btnHdr)
         btnEv = findViewById(R.id.btnEv)
         btnQuality = findViewById(R.id.btnQuality)
         btnSettings = findViewById(R.id.btnSettings)
@@ -147,7 +149,7 @@ class MainActivity : Activity(), VideoCamera.Listener {
         info = findViewById(R.id.info)
         topBar = findViewById(R.id.topBar)
         shutterFlash = findViewById(R.id.shutterFlash)
-        listOf<View>(btnOis, btnEis, btnStab, btnEv, btnQuality, btnSettings, btnFlip, thumb).forEach { pressable(it) }
+        listOf<View>(btnOis, btnEis, btnStab, btnHdr, btnEv, btnQuality, btnSettings, btnFlip, thumb).forEach { pressable(it) }
 
         btnRecord.setOnClickListener { toggleRecording() }
         btnOis.setOnClickListener {
@@ -164,6 +166,14 @@ class MainActivity : Activity(), VideoCamera.Listener {
             Logger.i("App", "Ориентация превью (STAB): вариант $next/4")
             toast("Поворот превью: $next/4")
             true
+        }
+        btnHdr.setOnClickListener {
+            if (camera.isRecording) return@setOnClickListener
+            if (caps?.supportsHlg10 != true) { toast("10-бит HLG на этой камере недоступен"); return@setOnClickListener }
+            repo.set("video.hdr", if (cfg.hdr) "off" else "hlg10")
+            cfg = repo.load()
+            toast(if (cfg.hdr) "HLG 10-бит: вкл (нужен STAB; на экранах без HDR картинка блёклая)" else "HLG 10-бит: выкл")
+            openCamera()
         }
         btnStab.setOnClickListener {
             if (camera.isRecording) return@setOnClickListener
@@ -438,6 +448,7 @@ class MainActivity : Activity(), VideoCamera.Listener {
         styleToggle(btnOis, controls.ois, true)
         styleToggle(btnEis, controls.stockEis && c.hasStockEis, c.hasStockEis)
         styleToggle(btnStab, controls.stab && c.facingBack, c.facingBack)
+        styleToggle(btnHdr, cfg.hdr && c.supportsHlg10 && controls.stab, c.supportsHlg10)
         val ev = controls.evIndex * c.evStep
         setTextFade(btnEv, String.format(Locale.US, "EV %+.1f", ev).replace("+0.0", "0.0"))
         btnEv.alpha = if (controls.evIndex == 0) 0.6f else 1f
@@ -509,7 +520,7 @@ class MainActivity : Activity(), VideoCamera.Listener {
     }
 
     private fun rotateIcons(deg: Float) {
-        val views = listOf<View>(btnFlip, thumb, btnSettings, btnQuality, btnOis, btnEis, btnStab, btnEv) +
+        val views = listOf<View>(btnFlip, thumb, btnSettings, btnQuality, btnOis, btnEis, btnStab, btnHdr, btnEv) +
             (0 until zoomRow.childCount).map { zoomRow.getChildAt(it) }
         views.forEach { it.animate().rotation(deg).setDuration(200).start() }
     }

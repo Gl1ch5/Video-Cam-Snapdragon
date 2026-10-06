@@ -33,7 +33,15 @@ class StabPipeline(
     /** Temporal denoise strength 0..1 (0 = off) and noise tolerance (luma difference treated as noise). */
     private val denoise: Float = 0.5f,
     private val denoiseSigma: Float = 0.04f,
+    /** Shifts gyro lookup relative to frame timestamps (ms); fixes residual micro-jitter from clock offset. */
+    timeOffsetMs: Double = 0.0,
+    /** 10-bit HLG output (RGB10_A2 surfaces); falls back to 8-bit if EGL cannot do it. */
+    hdr: Boolean = false,
 ) {
+    private val offsetNs = (timeOffsetMs * 1e6).toLong()
+    private val wantHdr = hdr
+    var is10bit = false
+        private set
     private val thread = HandlerThread("stab-gl", android.os.Process.THREAD_PRIORITY_DISPLAY).also { it.start() }
     private val handler = Handler(thread.looper)
     private lateinit var egl: EglCore
@@ -102,7 +110,8 @@ class StabPipeline(
     }
 
     private fun setup() {
-        egl = EglCore()
+        egl = EglCore(wantHdr)
+        is10bit = wantHdr && egl.is10bit
         dummy = egl.createPbuffer().also { egl.makeCurrent(it) }
         egl.noSwapInterval()
         val ids = IntArray(1)
@@ -118,7 +127,7 @@ class StabPipeline(
         st.setOnFrameAvailableListener({ if (!released) handler.post { drawFrame() } }, handler)
         cameraSurface = Surface(st)
         program = buildProgram(external = true)
-        val names = listOf("uTex", "uSize", "uK", "uZoom", "uPreview", "uSharp", "uBicubic", "uR")
+        val names = listOf("uTex", "uSize", "uK", "uZoom", "uPreview", "uSharp", "uBicubic", "uHdr", "uR")
         for (n in names) loc[n] = GLES20.glGetUniformLocation(program, n)
         if (denoise > 0f) {
             program2d = buildProgram(external = false)
@@ -131,7 +140,8 @@ class StabPipeline(
             for (i in 0..1) {
                 fboTex[i] = tex2[i]
                 GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, fboTex[i])
-                GLES30.glTexImage2D(GLES20.GL_TEXTURE_2D, 0, GLES30.GL_RGBA8, width, height, 0, GLES20.GL_RGBA, GLES20.GL_UNSIGNED_BYTE, null)
+                if (is10bit) GLES30.glTexImage2D(GLES20.GL_TEXTURE_2D, 0, GLES30.GL_RGB10_A2, width, height, 0, GLES20.GL_RGBA, GLES30.GL_UNSIGNED_INT_2_10_10_10_REV, null)
+                else GLES30.glTexImage2D(GLES20.GL_TEXTURE_2D, 0, GLES30.GL_RGBA8, width, height, 0, GLES20.GL_RGBA, GLES20.GL_UNSIGNED_BYTE, null)
                 GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MIN_FILTER, GLES20.GL_LINEAR)
                 GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MAG_FILTER, GLES20.GL_LINEAR)
                 GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_WRAP_S, GLES20.GL_CLAMP_TO_EDGE)
@@ -167,7 +177,7 @@ class StabPipeline(
         val latch = CountDownLatch(1)
         handler.post {
             runCatching {
-                encSurf = egl.createWindowSurface(rec.inputSurface)
+                encSurf = egl.createWindowSurface(rec.inputSurface, hlg = is10bit)
                 this.rec = rec
                 stabilizer.reset()
             }.onFailure { Logger.e(TAG, "encoder surface", it) }
@@ -210,10 +220,10 @@ class StabPipeline(
         val readout = readoutNs
         val exposure = exposureNs
         if (enabled) {
-            val centre = ts + exposure / 2 + readout / 2
+            val centre = ts + offsetNs + exposure / 2 + readout / 2
             val qr = gyro.orientationAt(centre)
             val qv = stabilizer.update(centre, qr)
-            Stabilizer.rowMatrices(qv, ts, readout, exposure, { gyro.orientationAt(it) }, rows)
+            Stabilizer.rowMatrices(qv, ts + offsetNs, readout, exposure, { gyro.orientationAt(it) }, rows)
         } else {
             Stabilizer.identityRows(rows)
             stabilizer.reset()
@@ -222,7 +232,7 @@ class StabPipeline(
         // Temporal denoise in the sensor frame (history reprojected by the gyro rotation between frames).
         var useDn = false
         if (denoise > 0f) {
-            val qNow = gyro.orientationAt(ts + exposure / 2 + readout / 2)
+            val qNow = gyro.orientationAt(ts + offsetNs + exposure / 2 + readout / 2)
             useDn = runDenoise(qNow)
             prevQ = qNow
         }
@@ -306,6 +316,7 @@ class StabPipeline(
         GLES20.glUniform4f(l["uK"]!!, k[0] * z, k[1] * z, cx, cy)
         GLES20.glUniform1f(l["uZoom"]!!, if (enabled) crop else 1f)
         GLES20.glUniform1i(l["uPreview"]!!, if (preview) previewRot else 0)
+        GLES20.glUniform1i(l["uHdr"]!!, if (is10bit) 1 else 0)
         GLES20.glUniform1f(l["uSharp"]!!, sharpen)
         GLES20.glUniform1i(l["uBicubic"]!!, if (bicubic) 1 else 0)
         GLES30.glUniformMatrix3fv(l["uR"]!!, Stabilizer.ROWS, false, rows, 0)
@@ -352,9 +363,23 @@ class StabPipeline(
             uniform int uPreview;
             uniform float uSharp;
             uniform int uBicubic;
+            uniform int uHdr;
             uniform mat3 uR[$rowsN];
             in vec2 vPos;
             out vec4 o;
+
+            // Preview only: HLG signal -> SDR (inverse OETF, BT.2020 -> BT.709, soft tone map, gamma).
+            vec3 outc(vec3 e) {
+                if (uPreview == 0 || uHdr == 0) return e;
+                const float a = 0.17883277; const float b = 0.28466892; const float cc = 0.55991073;
+                vec3 lo = e * e / 3.0;
+                vec3 hi = (exp((e - cc) / a) + b) / 12.0;
+                vec3 l = mix(lo, hi, step(vec3(0.5), e));
+                mat3 m = mat3(1.6605, -0.1246, -0.0182, -0.5876, 1.1329, -0.1006, -0.0728, -0.0083, 1.1187);
+                l = max(m * l, vec3(0.0));
+                l = l * 3.5 / (1.0 + l * 2.5);
+                return pow(clamp(l, 0.0, 1.0), vec3(1.0 / 2.2));
+            }
 
             vec3 fetch(vec2 q) {
                 // Raw buffer coordinates (top row = 0): the camera service pre-rotates the SurfaceTexture
@@ -397,7 +422,7 @@ class StabPipeline(
                 vec3 s = R * d;
                 vec2 q = vec2(s.x / s.z * uK.x + uK.z, s.y / s.z * uK.y + uK.w) / uSize;
                 if (q.x < 0.0 || q.x > 1.0 || q.y < 0.0 || q.y > 1.0) { o = vec4(0.0, 0.0, 0.0, 1.0); return; }
-                if (uPreview > 0 || uBicubic == 0) { o = vec4(fetch(q), 1.0); return; }
+                if (uPreview > 0 || uBicubic == 0) { o = vec4(outc(fetch(q)), 1.0); return; }
                 vec3 c = catmull(q);
                 if (uSharp > 0.0) {
                     vec2 px = 1.0 / uSize;
@@ -411,7 +436,7 @@ class StabPipeline(
                     // Limited overshoot: no halos around edges.
                     c = clamp(sh, min(lo, c) - 0.02, max(hi, c) + 0.02);
                 }
-                o = vec4(c, 1.0);
+                o = vec4(outc(c), 1.0);
             }"""
         val p = GLES20.glCreateProgram()
         GLES20.glAttachShader(p, compile(GLES20.GL_VERTEX_SHADER, vs))

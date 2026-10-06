@@ -23,6 +23,7 @@ class StabRecorder(
     fd: FileDescriptor,
     width: Int, height: Int, fps: Int, bitrate: Int, hevc: Boolean, orientationHint: Int,
     private val audio: Audio?,
+    hdr: Boolean = false,
 ) {
     class Audio(val sampleRate: Int, val channels: Int, val bitrate: Int)
 
@@ -52,6 +53,12 @@ class StabRecorder(
             setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 1)
             setInteger(MediaFormat.KEY_BITRATE_MODE, MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_VBR)
             setInteger(MediaFormat.KEY_PRIORITY, 0)
+            if (hdr && hevc) {
+                setInteger(MediaFormat.KEY_PROFILE, MediaCodecInfo.CodecProfileLevel.HEVCProfileMain10)
+                setInteger(MediaFormat.KEY_COLOR_STANDARD, MediaFormat.COLOR_STANDARD_BT2020)
+                setInteger(MediaFormat.KEY_COLOR_TRANSFER, MediaFormat.COLOR_TRANSFER_HLG)
+                setInteger(MediaFormat.KEY_COLOR_RANGE, MediaFormat.COLOR_RANGE_LIMITED)
+            }
         }
         // B-frames give ~10-15% better quality per bit; not every encoder accepts them, so fall back.
         var enc = MediaCodec.createEncoderByType(mime)
@@ -68,7 +75,7 @@ class StabRecorder(
         videoEnc = enc
         inputSurface = videoEnc.createInputSurface()
         videoEnc.start()
-        Logger.i(TAG, "Видеоэнкодер ${videoEnc.name} ${width}x$height@$fps ${bitrate / 1_000_000} Мбит/с")
+        Logger.i(TAG, "Видеоэнкодер ${videoEnc.name} ${width}x$height@$fps ${bitrate / 1_000_000} Мбит/с ${if (hdr && hevc) "10-бит HLG" else "8-бит"}")
         videoThread = Thread({ drain(videoEnc, true) }, "venc-drain").also { it.start() }
         if (audio != null) audioThread = Thread({ audioLoop(audio) }, "audio").also { it.start() }
     }
