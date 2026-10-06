@@ -138,21 +138,44 @@ object Shaders {
             uniform float uStr;
             uniform float uSigma;
             uniform int uHasHist;
+            uniform float uSp;
             in vec2 vPos;
             out vec4 o;
+            const vec3 LUM = vec3(0.299, 0.587, 0.114);
+            const vec2 NB[8] = vec2[8](vec2(-1.0, -1.0), vec2(0.0, -1.0), vec2(1.0, -1.0), vec2(-1.0, 0.0), vec2(1.0, 0.0), vec2(-1.0, 1.0), vec2(0.0, 1.0), vec2(1.0, 1.0));
+            const vec2 MC[4] = vec2[4](vec2(2.0, 0.0), vec2(-2.0, 0.0), vec2(0.0, 2.0), vec2(0.0, -2.0));
             void main() {
-                vec3 c = texture(uCur, vPos).rgb;
+                vec2 px = 1.0 / uSize;
+                vec3 c0 = texture(uCur, vPos).rgb;
+                // 1) spatial: edge-preserving 3x3 bilateral on the new frame (noise, not detail)
+                vec3 acc = c0; float ws = 1.0;
+                for (int i = 0; i < 8; i++) {
+                    vec3 n = texture(uCur, vPos + NB[i] * px).rgb;
+                    float dd = dot(abs(n - c0), LUM);
+                    float g = exp(-(dd * dd) / (4.0 * uSigma * uSigma));
+                    acc += n * g; ws += g;
+                }
+                vec3 c = mix(c0, acc / ws, uSp);
                 if (uHasHist == 0) { o = vec4(c, 1.0); return; }
+
+                // 2) temporal: history reprojected by the gyro rotation, refined by a tiny ±2 px motion search
                 vec3 d = vec3((vPos.x * uSize.x - uK.z) / uK.x, (vPos.y * uSize.y - uK.w) / uK.y, 1.0);
                 vec3 s = uRel * d;
                 vec2 q = vec2(s.x / s.z * uK.x + uK.z, s.y / s.z * uK.y + uK.w) / uSize;
                 if (q.x < 0.0 || q.x > 1.0 || q.y < 0.0 || q.y > 1.0) { o = vec4(c, 1.0); return; }
                 vec3 h = texture(uHist, vec2(q.x, 1.0 - q.y)).rgb;
-                float dl = dot(abs(c - h), vec3(0.299, 0.587, 0.114));
+                float best = dot(abs(c - h), LUM);
+                vec2 qb = q;
+                for (int i = 0; i < 4; i++) {
+                    vec2 qc = q + MC[i] * px;
+                    vec3 hc = texture(uHist, vec2(qc.x, 1.0 - qc.y)).rgb;
+                    float dc = dot(abs(c - hc), LUM);
+                    if (dc < best) { best = dc; h = hc; qb = qc; }
+                }
                 // Similar -> average (noise); different -> keep the new frame (motion, no ghosts).
-                float w = uStr * 0.75 * exp(-(dl * dl) / (uSigma * uSigma));
+                float w = uStr * 0.75 * exp(-(best * best) / (uSigma * uSigma));
                 // Large reprojection shifts blur the history: trust it less.
-                float shift = length((q - vPos) * uSize);
+                float shift = length((qb - vPos) * uSize);
                 w *= 1.0 / (1.0 + shift * 0.08);
                 o = vec4(mix(c, h, w), 1.0);
             }"""

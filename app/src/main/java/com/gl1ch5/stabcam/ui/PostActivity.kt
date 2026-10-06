@@ -24,6 +24,7 @@ import com.gl1ch5.stabcam.config.Quality
 import com.gl1ch5.stabcam.lut.Luts
 import com.gl1ch5.stabcam.stab.OfflineProcessor
 import com.gl1ch5.stabcam.stab.PostMeta
+import com.gl1ch5.stabcam.stab.PostJobs
 import com.gl1ch5.stabcam.util.Logger
 import org.json.JSONObject
 import java.io.File
@@ -34,8 +35,6 @@ class PostActivity : Activity() {
     private lateinit var repo: ConfigRepository
     private lateinit var list: LinearLayout
     private var sigma = 0.25
-    private var processor: OfflineProcessor? = null
-    private var busy = false
 
     private val accent get() = getColor(R.color.accent)
 
@@ -106,49 +105,45 @@ class PostActivity : Activity() {
         val btns = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         btns.addView(go, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)); btns.addView(cancel, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         card.addView(btns)
-        cancel.setOnClickListener { processor?.cancelled = true }
+        val job0 = PostJobs.find(f)
+        rows[f.name] = Row(status, bar, go, cancel)
+        job0?.let { render(f.name, it) }
+        cancel.setOnClickListener { PostJobs.cancelAll() }
         go.setOnClickListener {
-            if (busy) { Toast.makeText(this, "Уже идёт обработка", Toast.LENGTH_SHORT).show(); return@setOnClickListener }
-            busy = true
-            window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-            go.isEnabled = false; cancel.visibility = android.view.View.VISIBLE; bar.visibility = android.view.View.VISIBLE
-            val cfg = repo.load()
-            val q = Quality.entries.firstOrNull { it.width == meta.width && it.height == meta.height && it.fps == meta.fps }
-            val opt = OfflineProcessor.Options(
-                sigmaSec = sigma, maxAngleDeg = cfg.stabMaxAngle + 2, minCrop = cfg.stabMinCrop.toDouble(), maxCrop = (cfg.stabCrop + 0.10).toDouble(),
-                denoise = if (cfg.stabDenoise > 0f) minOf(1f, cfg.stabDenoise + 0.15f) else 0f, denoiseSigma = cfg.stabDenoiseSigma,
-                sharpen = cfg.stabSharpen, bicubic = cfg.stabBicubic,
-                lut = Luts.resolve(this, cfg.lutId), lutStrength = cfg.lutStrength,
-                bitrate = if (q != null) cfg.bitrateFor(q) else 50_000_000, hevc = cfg.codec.equals("hevc", true),
-                timeOffsetMs = cfg.stabTimeOffsetMs, gyroAxes = cfg.gyroAxes,
-                horizonDeg = cfg.stabHorizonDeg, gravCsv = File(f.parentFile, f.name.removeSuffix(".meta.json") + ".grav.csv").takeIf { it.exists() }?.readText(),
-            )
-            val gcsv = File(f.parentFile, f.name.removeSuffix(".meta.json") + ".gcsv").takeIf { it.exists() }?.readText()
-            val p = OfflineProcessor(this, meta, gcsv ?: "", opt) { frac, text ->
-                runOnUiThread { bar.progress = (frac * 1000).toInt(); status.text = text }
+            val j = PostJobs.find(f)
+            if (j?.state == "готово" && j.output != null) {
+                runCatching { startActivity(Intent(Intent.ACTION_VIEW).setDataAndType(j.output, "video/mp4").addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)) }
+                return@setOnClickListener
             }
-            processor = p
-            thread {
-                val out: Uri? = if (gcsv == null) null else p.run()
-                runOnUiThread {
-                    busy = false; processor = null
-                    window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-                    go.isEnabled = true; cancel.visibility = android.view.View.GONE
-                    if (gcsv == null) status.text = "Нет гиро-лога (.gcsv)"
-                    else if (out == null) { if (p.cancelled) status.text = "Отменено" }
-                    else {
-                        bar.progress = 1000
-                        go.text = "Открыть результат"
-                        go.setOnClickListener { runCatching { startActivity(Intent(Intent.ACTION_VIEW).setDataAndType(out, "video/mp4").addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)) } }
-                    }
-                }
-            }
+            if (android.os.Build.VERSION.SDK_INT >= 33 && checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED)
+                requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), 5)
+            if (File(f.parentFile, f.name.removeSuffix(".meta.json") + ".gcsv").exists()) PostJobs.enqueue(this, PostJobs.Job(f, sigma))
+            else Toast.makeText(this, "Нет гиро-лога (.gcsv)", Toast.LENGTH_SHORT).show()
         }
     }
 
-    override fun onDestroy() {
-        super.onDestroy()
-        processor?.cancelled = true
+    private class Row(val status: TextView, val bar: ProgressBar, val go: Button, val cancel: Button)
+    private val rows = HashMap<String, Row>()
+
+    private fun render(metaName: String, j: PostJobs.Job) {
+        val r = rows[metaName] ?: return
+        r.status.text = if (j.state == "идёт") j.text else "${j.state.replaceFirstChar { it.uppercase() }}: ${j.text}"
+        r.bar.visibility = if (j.state == "идёт" || j.state == "ожидает") android.view.View.VISIBLE else android.view.View.GONE
+        r.bar.progress = (j.fraction * 1000).toInt()
+        r.cancel.visibility = if (j.state == "идёт" || j.state == "ожидает") android.view.View.VISIBLE else android.view.View.GONE
+        r.go.isEnabled = j.state != "идёт" && j.state != "ожидает"
+        r.go.text = if (j.state == "готово") "Открыть результат" else "Обработать"
+    }
+
+    override fun onResume() {
+        super.onResume()
+        PostJobs.listener = { j -> runOnUiThread { render(j.metaFile.name, j) } }
+        PostJobs.jobs.forEach { render(it.metaFile.name, it) }
+    }
+
+    override fun onPause() {
+        super.onPause()
+        PostJobs.listener = null
     }
 
     private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
