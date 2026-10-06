@@ -22,6 +22,7 @@ import android.hardware.camera2.CaptureResult
 import android.hardware.camera2.TotalCaptureResult
 import com.gl1ch5.stabcam.util.Logger
 import com.gl1ch5.stabcam.lut.Lut
+import com.gl1ch5.stabcam.stab.GyroLog
 import com.gl1ch5.stabcam.stab.GyroTracker
 import com.gl1ch5.stabcam.stab.Mp4Tagger
 import com.gl1ch5.stabcam.stab.StabPipeline
@@ -87,6 +88,8 @@ class VideoCamera(private val ctx: Context, private val listener: Listener) {
     private var recordUri: Uri? = null
     private var recordPfd: ParcelFileDescriptor? = null
     private var recordDescription: String? = null
+    private var recordName = ""
+    private var recordHint = 0
     @Volatile var isRecording = false
         private set
 
@@ -404,6 +407,7 @@ class VideoCamera(private val ctx: Context, private val listener: Listener) {
         val uri = ctx.contentResolver.insert(MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY), values)
             ?: error("MediaStore insert failed")
         recordUri = uri
+        recordName = name
         val pfd = ctx.contentResolver.openFileDescriptor(uri, "rw") ?: error("open fd failed")
         recordPfd = pfd
         return pfd
@@ -460,7 +464,7 @@ class VideoCamera(private val ctx: Context, private val listener: Listener) {
         if (pipeline != null) return
         val c = caps ?: return
         val cfg = config ?: return
-        if (!(controls.stab && cfg.stabEnabled && c.facingBack && !quality.highSpeed)) return
+        if (!(((controls.stab && cfg.stabEnabled) || cfg.postMode) && c.facingBack && !quality.highSpeed)) return
         val hdr = cfg.hdr && c.supportsHlg10 && cfg.codec.equals("hevc", true)
         val g = GyroTracker(ctx, cfg.gyroAxes)
         if (!g.start()) { Logger.e(TAG, "Стабилизация отключена: нет гироскопа"); return }
@@ -479,6 +483,7 @@ class VideoCamera(private val ctx: Context, private val listener: Listener) {
         }
         p.setZoom(controls.zoom)
         p.previewRot = cfg.stabPreviewRot
+        p.rawMode = cfg.postMode
         p.setLut(lut, lutStrength)
         p.setPreview(previewSurface)
         gyro = g
@@ -493,12 +498,14 @@ class VideoCamera(private val ctx: Context, private val listener: Listener) {
         try {
             val pfd = createOutput()
             recordDescription = summary(p)
+            recordHint = orientationHint
             val hevc = cfg.codec.equals("hevc", true) && CameraCaps.encoderSupports(MediaFormat.MIMETYPE_VIDEO_HEVC, q.width, q.height, q.fps)
             val rec = StabRecorder(
-                pfd.fileDescriptor, q.width, q.height, q.fps, cfg.bitrateFor(q), hevc, orientationHint,
+                pfd.fileDescriptor, q.width, q.height, q.fps, (cfg.bitrateFor(q) * (if (cfg.postMode) cfg.postBitrateFactor else 1.0)).toInt(), hevc, orientationHint,
                 if (cfg.audio) StabRecorder.Audio(cfg.audioSampleRate, cfg.audioChannels, cfg.audioBitrate) else null,
                 p.is10bit,
             )
+            if (cfg.postMode) gyro?.startLog()
             p.startRecording(rec)
             stabRecording = true
             isRecording = true
@@ -514,6 +521,7 @@ class VideoCamera(private val ctx: Context, private val listener: Listener) {
         val cfg = config
         val q = quality
         val parts = mutableListOf(
+            if (cfg?.postMode == true) "RAW for post-processing" else "",
             "${q.width}x${q.height} ${q.fps}fps",
             (if (cfg?.codec.equals("hevc", true)) "HEVC" else "H.264") + if (p.is10bit) " 10-bit HLG" else " 8-bit",
             "${(cfg?.bitrateFor(q) ?: 0) / 1_000_000} Mbps",
@@ -521,11 +529,56 @@ class VideoCamera(private val ctx: Context, private val listener: Listener) {
             "OIS " + if (controls.ois) "on" else "off",
         )
         if (!cfg?.lutId.isNullOrEmpty()) parts += "LUT ${cfg?.lutId}"
-        return parts.joinToString(" | ")
+        return parts.filter { it.isNotEmpty() }.joinToString(" | ")
+    }
+
+    /** POST mode sidecars: gyro log (.gcsv, Gyroflow compatible) and frame/camera metadata (.meta.json). */
+    private fun writePostSidecars(p: StabPipeline, ok: Boolean, uri: Uri?) {
+        val g = gyro ?: return
+        val (t, w, n) = g.stopLog()
+        val base = p.lastBaseTs
+        val (ft, fe, fn) = p.frameLog()
+        if (!ok || base < 0 || fn == 0) return
+        val cfg = config ?: return
+        val c = caps ?: return
+        val q = quality
+        try {
+            val nameBase = recordName.removeSuffix(".mp4")
+            val dir = java.io.File(ctx.filesDir, "post").apply { mkdirs() }
+            val gc = GyroLog.gcsv(base, t, w, n, base - 400_000_000L, ft[fn - 1] + 400_000_000L, note = "StabCam ${com.gl1ch5.stabcam.BuildConfig.VERSION_NAME} ${android.os.Build.MODEL}")
+            java.io.File(dir, "$nameBase.gcsv").writeText(gc)
+            val frames = org.json.JSONArray()
+            for (i in 0 until fn) frames.put(org.json.JSONArray().put(ft[i] - base).put(fe[i]))
+            val k = c.intrinsicsFor(q.width, q.height)
+            val meta = org.json.JSONObject()
+                .put("version", 1).put("video", recordName).put("uri", uri?.toString() ?: "")
+                .put("width", q.width).put("height", q.height).put("fps", q.fps)
+                .put("baseTsNs", base).put("orientationHint", recordHint).put("sensorOrientation", c.sensorOrientation)
+                .put("intrinsics", org.json.JSONArray(k.map { it.toDouble() }))
+                .put("readoutNs", p.readout).put("hdr", p.is10bit)
+                .put("gyroAxes", org.json.JSONArray(cfg.gyroAxes))
+                .put("frames", frames)
+            java.io.File(dir, "$nameBase.meta.json").writeText(meta.toString())
+            Logger.i(TAG, "ПОСТ: записаны гиро-лог (${n} отсчётов) и метаданные ($fn кадров)")
+            if (cfg.postExportGcsv) {
+                val v = ContentValues().apply {
+                    put(MediaStore.Downloads.DISPLAY_NAME, "$nameBase.gcsv")
+                    put(MediaStore.Downloads.MIME_TYPE, "text/csv")
+                    put(MediaStore.Downloads.RELATIVE_PATH, "Download/StabCam")
+                }
+                ctx.contentResolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, v)?.let { u ->
+                    ctx.contentResolver.openOutputStream(u)?.use { it.write(gc.toByteArray()) }
+                    Logger.i(TAG, "gcsv для Gyroflow: Download/StabCam/$nameBase.gcsv")
+                }
+            }
+        } catch (e: Exception) {
+            Logger.e(TAG, "Не удалось записать sidecar", e)
+        }
     }
 
     private fun stopStab() {
         val ok = pipeline?.stopRecording() ?: false
+        if (config?.postMode == true) pipeline?.let { writePostSidecars(it, ok, recordUri) }
         if (ok) recordPfd?.fileDescriptor?.let { fd ->
             val soft = "StabCam ${com.gl1ch5.stabcam.BuildConfig.VERSION_NAME}"
             val desc = recordDescription ?: ""

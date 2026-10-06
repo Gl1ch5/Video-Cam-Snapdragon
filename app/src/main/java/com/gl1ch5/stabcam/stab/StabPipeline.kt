@@ -84,11 +84,19 @@ class StabPipeline(
     private val stm = FloatArray(16)
 
     @Volatile var enabled = true
+    /** POST mode: frames pass through untouched (no warp/denoise/sharpen/LUT); the frame timestamps are logged. */
+    @Volatile var rawMode = false
+    private var frameTs = LongArray(4096)
+    private var frameExp = LongArray(4096)
+    private var frameN = 0
+    @Volatile var lastBaseTs = -1L
+        private set
     /** Preview orientation variant 1..4 (see shader); encoder output is unaffected. */
     @Volatile var previewRot = 1
     @Volatile private var zoom = 1f
     @Volatile private var exposureNs = 8_000_000L
     @Volatile private var readoutNs = readoutDefaultNs
+    val readout: Long get() = readoutNs
     @Volatile private var released = false
 
     // stats
@@ -216,12 +224,16 @@ class StabPipeline(
             runCatching {
                 encSurf = egl.createWindowSurface(rec.inputSurface, hlg = is10bit)
                 this.rec = rec
+                frameN = 0
                 stabilizer.reset()
             }.onFailure { Logger.e(TAG, "encoder surface", it) }
             latch.countDown()
         }
         latch.await(3, TimeUnit.SECONDS)
     }
+
+    /** Frame timestamps (ns, camera clock) and exposure times of the last recording, valid after [stopRecording]. */
+    fun frameLog(): Triple<LongArray, LongArray, Int> = Triple(frameTs, frameExp, frameN)
 
     /** Stops feeding the encoder and finalises the file. Blocks. */
     fun stopRecording(): Boolean {
@@ -233,6 +245,7 @@ class StabPipeline(
             encSurf?.let { runCatching { egl.destroySurface(it) } }
             encSurf = null
             egl.makeCurrent(dummy!!)
+            lastBaseTs = r?.baseTs ?: -1L
             ok = r?.finish() ?: false
             latch.countDown()
         }
@@ -256,7 +269,7 @@ class StabPipeline(
         // Orientation at the frame centre, smoothed; per-row matrices for the rolling shutter.
         val readout = readoutNs
         val exposure = exposureNs
-        if (enabled) {
+        if (enabled && !rawMode) {
             val centre = ts + offsetNs + exposure / 2 + readout / 2
             val qr = gyro.orientationAt(centre)
             val qv = stabilizer.update(centre, qr)
@@ -268,7 +281,7 @@ class StabPipeline(
 
         // Temporal denoise in the sensor frame (history reprojected by the gyro rotation between frames).
         var useDn = false
-        if (denoise > 0f) {
+        if (denoise > 0f && !rawMode) {
             val qNow = gyro.orientationAt(ts + offsetNs + exposure / 2 + readout / 2)
             useDn = runDenoise(qNow)
             prevQ = qNow
@@ -283,6 +296,10 @@ class StabPipeline(
         if (r != null && es != null) {
             egl.makeCurrent(es)
             r.onFrame(ts)
+            if (rawMode) {
+                if (frameN == frameTs.size) { frameTs = frameTs.copyOf(frameN * 2); frameExp = frameExp.copyOf(frameN * 2) }
+                frameTs[frameN] = ts; frameExp[frameN] = exposure; frameN++
+            }
             draw(width, height, false, useDn)
             egl.setPresentationTime(es, r.relative(ts))
             egl.swap(es)
@@ -351,17 +368,17 @@ class StabPipeline(
         val cx = width / 2f + (k[2] - width / 2f) * z
         val cy = height / 2f + (k[3] - height / 2f) * z
         GLES20.glUniform4f(l["uK"]!!, k[0] * z, k[1] * z, cx, cy)
-        GLES20.glUniform1f(l["uZoom"]!!, if (enabled) stabilizer.crop.toFloat() else 1f)
+        GLES20.glUniform1f(l["uZoom"]!!, if (enabled && !rawMode) stabilizer.crop.toFloat() else 1f)
         GLES20.glUniform1i(l["uPreview"]!!, if (preview) previewRot else 0)
         GLES20.glUniform1i(l["uHdr"]!!, if (is10bit) 1 else 0)
         GLES20.glActiveTexture(GLES20.GL_TEXTURE2)
         GLES20.glBindTexture(GLES30.GL_TEXTURE_3D, lutTex)
         GLES20.glUniform1i(l["uLut"]!!, 2)
-        GLES20.glUniform1f(l["uLutAmt"]!!, if (is10bit) 0f else lutAmt)
+        GLES20.glUniform1f(l["uLutAmt"]!!, if (is10bit || rawMode) 0f else lutAmt)
         GLES20.glUniform1f(l["uLutN"]!!, lutSize)
         GLES20.glActiveTexture(GLES20.GL_TEXTURE0)
-        GLES20.glUniform1f(l["uSharp"]!!, sharpen)
-        GLES20.glUniform1i(l["uBicubic"]!!, if (bicubic) 1 else 0)
+        GLES20.glUniform1f(l["uSharp"]!!, if (rawMode) 0f else sharpen)
+        GLES20.glUniform1i(l["uBicubic"]!!, if (bicubic && !rawMode) 1 else 0)
         GLES30.glUniformMatrix3fv(l["uR"]!!, Stabilizer.ROWS, false, rows, 0)
         GLES20.glEnableVertexAttribArray(0)
         GLES20.glVertexAttribPointer(0, 2, GLES20.GL_FLOAT, false, 0, quad)

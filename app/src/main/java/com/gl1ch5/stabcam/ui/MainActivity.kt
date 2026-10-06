@@ -58,6 +58,7 @@ class MainActivity : Activity(), VideoCamera.Listener {
     private lateinit var btnStab: TextView
     private lateinit var btnHdr: TextView
     private lateinit var btnLut: TextView
+    private lateinit var btnPost: TextView
     private lateinit var lutPicker: LutPicker
     private lateinit var btnEv: TextView
     private lateinit var btnQuality: TextView
@@ -146,6 +147,15 @@ class MainActivity : Activity(), VideoCamera.Listener {
         btnStab = findViewById(R.id.btnStab)
         btnHdr = findViewById(R.id.btnHdr)
         btnLut = findViewById(R.id.btnLut)
+        btnPost = findViewById(R.id.btnPost)
+        btnPost.setOnClickListener {
+            if (camera.isRecording) return@setOnClickListener
+            if (caps?.facingBack != true) { toast("Режим ПОСТ: только основная камера"); return@setOnClickListener }
+            repo.set("post.enabled", !cfg.postMode)
+            cfg = repo.load()
+            toast(if (cfg.postMode) "ПОСТ: запись без обработки + гиро-лог (.gcsv). Обработка и экспорт после съёмки" else "ПОСТ: выкл")
+            openCamera()
+        }
         lutPicker = LutPicker(this, { id -> selectLut(id) }, {
             startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("*/*"), REQ_LUT)
         })
@@ -166,7 +176,7 @@ class MainActivity : Activity(), VideoCamera.Listener {
         info = findViewById(R.id.info)
         topBar = findViewById(R.id.topBar)
         shutterFlash = findViewById(R.id.shutterFlash)
-        listOf<View>(btnLut, btnOis, btnEis, btnStab, btnHdr, btnEv, btnQuality, btnSettings, btnFlip, thumb).forEach { pressable(it) }
+        listOf<View>(btnPost, btnLut, btnOis, btnEis, btnStab, btnHdr, btnEv, btnQuality, btnSettings, btnFlip, thumb).forEach { pressable(it) }
 
         btnRecord.setOnClickListener { toggleRecording() }
         btnOis.setOnClickListener {
@@ -318,7 +328,7 @@ class MainActivity : Activity(), VideoCamera.Listener {
         if (quality !in supported) quality = supported.firstOrNull() ?: Quality.FHD30
 
         val base = c.previewSize()
-        val useStab = controls.stab && c.facingBack && !quality.highSpeed
+        val useStab = (controls.stab || cfg.postMode) && c.facingBack && !quality.highSpeed
         // With GL stabilisation the preview buffer is rendered by us, already upright (portrait).
         val size = if (useStab) Size(base.height, base.width) else base
         if (pendingPreviewSize != size) {
@@ -410,6 +420,7 @@ class MainActivity : Activity(), VideoCamera.Listener {
     private fun setRecordingUi(rec: Boolean) {
         fade(topBar, !rec)
         fade(btnLut, !rec)
+        fade(btnPost, !rec)
         fade(btnFlip, !rec)
         fade(thumb, !rec)
         fade(evPanel, false, View.GONE)
@@ -466,7 +477,8 @@ class MainActivity : Activity(), VideoCamera.Listener {
         val c = caps ?: return
         styleToggle(btnOis, controls.ois, true)
         styleToggle(btnEis, controls.stockEis && c.hasStockEis, c.hasStockEis)
-        styleToggle(btnStab, controls.stab && c.facingBack, c.facingBack)
+        styleToggle(btnStab, controls.stab && c.facingBack && !cfg.postMode, c.facingBack && !cfg.postMode)
+        styleToggle(btnPost, cfg.postMode && c.facingBack, c.facingBack)
         styleToggle(btnHdr, cfg.hdr && c.supportsHlg10 && controls.stab, c.supportsHlg10)
         val ev = controls.evIndex * c.evStep
         setTextFade(btnEv, String.format(Locale.US, "EV %+.1f", ev).replace("+0.0", "0.0"))
@@ -539,7 +551,7 @@ class MainActivity : Activity(), VideoCamera.Listener {
     }
 
     private fun rotateIcons(deg: Float) {
-        val views = listOf<View>(btnFlip, thumb, btnSettings, btnQuality, btnLut, btnOis, btnEis, btnStab, btnHdr, btnEv) +
+        val views = listOf<View>(btnFlip, thumb, btnSettings, btnQuality, btnPost, btnLut, btnOis, btnEis, btnStab, btnHdr, btnEv) +
             (0 until zoomRow.childCount).map { zoomRow.getChildAt(it) }
         views.forEach { it.animate().rotation(deg).setDuration(200).start() }
     }

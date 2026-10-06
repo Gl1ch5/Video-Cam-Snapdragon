@@ -59,5 +59,10 @@
     "denoiseSigma": 0.04,
     "timeOffsetMs": 0,
     "minCrop": 1.03
+  },
+  "post": {
+    "enabled": false,
+    "bitrateFactor": 1.5,
+    "exportGcsv": true
   }
 }

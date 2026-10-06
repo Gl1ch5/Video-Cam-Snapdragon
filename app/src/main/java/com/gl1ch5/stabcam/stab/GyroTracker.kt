@@ -32,6 +32,37 @@ class GyroTracker(private val ctx: Context, axes: List<String>) : SensorEventLis
     private var samples = 0L
     private var started = 0L
 
+    // Raw device-frame rates (rad/s): short ring always on, full log while recording.
+    private val rawN = 2048
+    private val rawT = LongArray(rawN)
+    private val rawW = FloatArray(rawN * 3)
+    private var rawCount = 0L
+    private var logging = false
+    private var logT = LongArray(0)
+    private var logW = FloatArray(0)
+    private var logN = 0
+
+    /** Starts the full log, pre-seeded with the last ~0.4 s so the clip start is covered. */
+    @Synchronized fun startLog() {
+        logT = LongArray(1 shl 14); logW = FloatArray((1 shl 14) * 3); logN = 0
+        val have = minOf(rawCount, rawN.toLong(), 200L)
+        for (k in have downTo 1) append(((rawCount - k) % rawN).toInt())
+        logging = true
+    }
+
+    /** Stops logging; returns (timestamps ns, xyz rates, count). */
+    @Synchronized fun stopLog(): Triple<LongArray, FloatArray, Int> {
+        logging = false
+        return Triple(logT, logW, logN)
+    }
+
+    private fun append(i: Int) {
+        if (logN == logT.size) { logT = logT.copyOf(logN * 2); logW = logW.copyOf(logN * 6) }
+        logT[logN] = rawT[i]
+        logW[logN * 3] = rawW[i * 3]; logW[logN * 3 + 1] = rawW[i * 3 + 1]; logW[logN * 3 + 2] = rawW[i * 3 + 2]
+        logN++
+    }
+
     fun start(): Boolean {
         val sm = ctx.getSystemService(SensorManager::class.java)
         val gyro = sm.getDefaultSensor(Sensor.TYPE_GYROSCOPE) ?: run {
@@ -64,6 +95,10 @@ class GyroTracker(private val ctx: Context, axes: List<String>) : SensorEventLis
             }
             lastT = e.timestamp
             lastW = w
+            val ri = (rawCount % rawN).toInt()
+            rawT[ri] = e.timestamp; rawW[ri * 3] = e.values[0]; rawW[ri * 3 + 1] = e.values[1]; rawW[ri * 3 + 2] = e.values[2]
+            rawCount++
+            if (logging) append(ri)
             val i = (count % n).toInt()
             times[i] = e.timestamp; qw[i] = cur.w; qx[i] = cur.x; qy[i] = cur.y; qz[i] = cur.z
             count++
