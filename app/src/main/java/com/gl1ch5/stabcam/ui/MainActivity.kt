@@ -182,19 +182,7 @@ class MainActivity : Activity(), VideoCamera.Listener {
         listOf<View>(btnLut, btnOis, btnEis, btnStab, btnHdr, btnEv, btnQuality, btnSettings, btnFlip, thumb).forEach { pressable(it) }
 
         btnRecord.setOnClickListener { toggleRecording() }
-        btnOis.setOnClickListener {
-            if (camera.isRecording) return@setOnClickListener
-            // ON → AUTO (off while STAB is on, avoids OIS and gyro-EIS correcting the same motion) → OFF → ON
-            val next = (oisMode() + 1) % 3
-            val policyBefore = cfg.stabOisOff
-            repo.set("camera.ois", next != 2)
-            repo.set("stab.oisPolicy", if (next == 1) "off" else "keep")
-            cfg = repo.load()
-            controls = controls.copy(ois = next != 2)
-            Fx.pop(btnOis)
-            toast(when (next) { 0 -> "OIS: вкл"; 1 -> "OIS: авто (выключается при STAB)"; else -> "OIS: выкл" })
-            if (cfg.stabOisOff != policyBefore) openCamera() else setControls(controls)
-        }
+        btnOis.setOnClickListener { if (!camera.isRecording) showOisMenu() }
         btnOis.setOnLongClickListener { if (!camera.isRecording) showOisMenu(); true }
         val gd = GestureDetector(this, object : GestureDetector.SimpleOnGestureListener() {
             override fun onDown(e: android.view.MotionEvent) = true
@@ -213,23 +201,8 @@ class MainActivity : Activity(), VideoCamera.Listener {
             }
         })
         modeLabel.setOnTouchListener { v, ev -> gd.onTouchEvent(ev); true }
-        btnHdr.setOnClickListener {
-            if (camera.isRecording) return@setOnClickListener
-            if (caps?.supportsHlg10 != true) { toast("10-бит HLG на этой камере недоступен"); Fx.shake(btnHdr); return@setOnClickListener }
-            repo.set("video.hdr", if (cfg.hdr) "off" else "hlg10")
-            cfg = repo.load()
-            toast(if (cfg.hdr) "HLG 10-бит: вкл (нужен STAB; на экранах без HDR картинка блёклая)" else "HLG 10-бит: выкл")
-            openCamera()
-        }
-        btnStab.setOnClickListener {
-            if (camera.isRecording) return@setOnClickListener
-            if (caps?.facingBack != true) { toast("Стабилизация по гиро: только основная камера"); Fx.shake(btnStab); return@setOnClickListener }
-            controls = controls.copy(stab = !controls.stab)
-            repo.set("stab.enabled", controls.stab)
-            cfg = repo.load()
-            toast(if (controls.stab) "Гиро-стабилизация: вкл" else "Гиро-стабилизация: выкл")
-            openCamera()
-        }
+        btnHdr.setOnClickListener { showHdrMenu() }
+        btnStab.setOnClickListener { showStabMenu() }
         btnStab.setOnLongClickListener {
             if (camera.isRecording) return@setOnLongClickListener true
             val cur = cfg.gyroAxes
@@ -243,15 +216,7 @@ class MainActivity : Activity(), VideoCamera.Listener {
             openCamera()
             true
         }
-        btnEis.setOnClickListener {
-            if (caps?.hasStockEis != true) {
-                toast("Стоковый EIS недоступен"); Fx.shake(btnEis)
-                return@setOnClickListener
-            }
-            setControls(controls.copy(stockEis = !controls.stockEis))
-            repo.set("camera.stockEis", controls.stockEis)
-            toast(if (controls.stockEis) "Стоковый EIS: вкл (кроп + мыло)" else "Стоковый EIS: выкл")
-        }
+        btnEis.setOnClickListener { showEisMenu() }
         btnEv.setOnClickListener {
             fade(evPanel, evPanel.visibility != View.VISIBLE, View.GONE, rise = true)
         }
@@ -674,6 +639,52 @@ class MainActivity : Activity(), VideoCamera.Listener {
         repo.saveUserOverrides(root)
     }
 
+    private fun mark(on: Boolean) = if (on) "●" else ""
+
+    /** Tap on STAB: pick the stabilization mode (and horizon level) from a drop-down. */
+    private fun showStabMenu() {
+        if (camera.isRecording) return
+        if (caps?.facingBack != true) { toast("Стабилизация по гиро: только основная камера"); Fx.shake(btnStab); return }
+        val cur = if (!controls.stab) -1 else Presets.indexOf(Presets.strength, repo.effectiveJson())
+        fun setMode(i: Int) {
+            repo.set("stab.enabled", i >= 0)
+            if (i >= 0) Presets.apply(repo, Presets.strength[i])
+            cfg = repo.load(); controls = controls.copy(stab = i >= 0)
+            Fx.pop(btnStab); needReopen = true
+        }
+        val items = ArrayList<QuickMenu.Item>()
+        items += QuickMenu.Item("Выкл", { mark(cur == -1) }, { setMode(-1) }, closeOnTap = true)
+        Presets.strength.forEachIndexed { i, l -> items += QuickMenu.Item(l.label, { mark(cur == i) }, { setMode(i) }, closeOnTap = true) }
+        items += QuickMenu.Item("Горизонт", { Presets.horizon[Presets.indexOf(Presets.horizon, repo.effectiveJson())].label }, {
+            val n = (Presets.indexOf(Presets.horizon, repo.effectiveJson()) + 1) % Presets.horizon.size
+            Presets.apply(repo, Presets.horizon[n]); cfg = repo.load(); needReopen = true
+        }, accent = true)
+        needReopen = false
+        quickMenu.show(btnStab, items) { if (needReopen) { needReopen = false; openCamera() } }
+    }
+
+    private fun showHdrMenu() {
+        if (camera.isRecording) return
+        if (caps?.supportsHlg10 != true) { toast("10-бит HLG на этой камере недоступен"); Fx.shake(btnHdr); return }
+        fun set(on: Boolean) { repo.set("video.hdr", if (on) "hlg10" else "off"); cfg = repo.load(); Fx.pop(btnHdr); needReopen = true }
+        val items = listOf(
+            QuickMenu.Item("Обычный (SDR)", { mark(!cfg.hdr) }, { set(false) }, closeOnTap = true),
+            QuickMenu.Item("HLG 10-бит", { mark(cfg.hdr) }, { set(true) }, closeOnTap = true),
+        )
+        needReopen = false
+        quickMenu.show(btnHdr, items) { if (needReopen) { needReopen = false; openCamera() } }
+    }
+
+    private fun showEisMenu() {
+        if (caps?.hasStockEis != true) { toast("Стоковый EIS недоступен"); Fx.shake(btnEis); return }
+        fun set(on: Boolean) { setControls(controls.copy(stockEis = on)); repo.set("camera.stockEis", on); Fx.pop(btnEis) }
+        val items = listOf(
+            QuickMenu.Item("Стоковый EIS выкл", { mark(!controls.stockEis) }, { set(false) }, closeOnTap = true),
+            QuickMenu.Item("Стоковый EIS вкл (кроп + мыло)", { mark(controls.stockEis) }, { set(true) }, closeOnTap = true),
+        )
+        quickMenu.show(btnEis, items) {}
+    }
+
     /** Long-press on OIS: every mode this camera exposes, selectable. */
     private fun showOisMenu() {
         val key = vendorStabKey()
@@ -687,7 +698,6 @@ class MainActivity : Activity(), VideoCamera.Listener {
             Fx.pop(btnOis)
             needReopen = true
         }
-        fun mark(on: Boolean) = if (on) "●" else ""
         val items = ArrayList<QuickMenu.Item>()
         items += QuickMenu.Item("OIS вкл", { mark(oisMode() == 0) }, { apply(0, null, false) }, closeOnTap = true)
         items += QuickMenu.Item("OIS авто (выкл при STAB)", { mark(oisMode() == 1) }, { apply(1, null, false) }, closeOnTap = true)

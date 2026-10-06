@@ -6,10 +6,12 @@ import org.json.JSONObject
 object Presets {
     class Level(val label: String, val values: Map<String, Any>)
 
+    /** Stabilization modes (GoPro-style): bigger margin = more shake absorbed, tighter field of view. The crop adapts to the shake, so calm scenes stay wide. */
     val strength = listOf(
-        Level("Слабая", mapOf("stab.tauMaxMs" to 300, "stab.crop" to 1.10, "stab.maxAngleDeg" to 4.0)),
-        Level("Средняя", mapOf("stab.tauMaxMs" to 500, "stab.crop" to 1.15, "stab.maxAngleDeg" to 6.0)),
-        Level("Сильная", mapOf("stab.tauMaxMs" to 800, "stab.crop" to 1.22, "stab.maxAngleDeg" to 9.0)),
+        Level("Лёгкая", mapOf("stab.crop" to 1.10, "stab.tauMaxMs" to 300, "stab.maxAngleDeg" to 4.0)),
+        Level("Стандарт", mapOf("stab.crop" to 1.15, "stab.tauMaxMs" to 500, "stab.maxAngleDeg" to 6.0)),
+        Level("Ходьба / бег", mapOf("stab.crop" to 1.30, "stab.tauMaxMs" to 700, "stab.maxAngleDeg" to 12.0)),
+        Level("Максимум", mapOf("stab.crop" to 1.40, "stab.tauMaxMs" to 900, "stab.maxAngleDeg" to 15.0)),
     )
     val horizon = listOf(
         Level("Выкл", mapOf("stab.horizonDeg" to 0.0)),

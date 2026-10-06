@@ -422,12 +422,13 @@ class SettingsActivity : Activity() {
     private fun stabilization(e: JSONObject) {
         section("Стабилизация")
         toggle("Гиро-стабилизация", "Своя стабилизация по гироскопу (кнопка STAB).", bool(e, "stab.enabled", true)) { repo.set("stab.enabled", it) }
-        choice("Сила", Presets.strength.map { it.label }, Presets.indexOf(Presets.strength, e)) { Presets.apply(repo, Presets.strength[it]) }
+        choice("Режим", Presets.strength.map { it.label }, Presets.indexOf(Presets.strength, e)) { Presets.apply(repo, Presets.strength[it]) }
         choice("Горизонт", Presets.horizon.map { it.label }, Presets.indexOf(Presets.horizon, e)) { Presets.apply(repo, Presets.horizon[it]) }
         note("Горизонт выравнивает крен по гравитации (в живом режиме ограничен запасом кропа, полный диапазон работает при обработке ПОСТ).")
-        choice("OIS при STAB", listOf("Как выше", "Выключать"), if (str(e, "stab.oisPolicy") == "off") 1 else 0) { repo.set("stab.oisPolicy", if (it == 1) "off" else "keep") }
-        note("Если со STAB заметны подёргивания, попробуйте «Выключать»: OIS и своя стабилизация могут компенсировать одно и то же движение дважды.")
-        toggle("Аппаратный OIS", "Оптическая стабилизация камеры.", bool(e, "camera.ois", true)) { repo.set("camera.ois", it) }
+        val oisIdx = if (!bool(e, "camera.ois", true)) 2 else if (str(e, "stab.oisPolicy") == "off") 1 else 0
+        choice("OIS", listOf("Вкл", "Авто (выкл при STAB)", "Выкл"), oisIdx) {
+            repo.set("camera.ois", it != 2); repo.set("stab.oisPolicy", if (it == 1) "off" else "keep")
+        }
         toggle("Стоковый EIS", "Обрезает и мылит кадр; при STAB отключается.", bool(e, "camera.stockEis", false)) { repo.set("camera.stockEis", it) }
         section("Качество картинки")
         choice("Шумоподавление по времени", Presets.denoise.map { it.label }, Presets.indexOf(Presets.denoise, e)) { Presets.apply(repo, Presets.denoise[it]) }
