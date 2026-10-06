@@ -46,6 +46,7 @@
 
             <TextView android:id="@+id/btnOis" style="@style/TopText" android:text="OIS" />
             <TextView android:id="@+id/btnEis" style="@style/TopText" android:text="EIS" />
+            <TextView android:id="@+id/btnStab" style="@style/TopText" android:text="STAB" />
             <TextView android:id="@+id/btnEv" style="@style/TopText" android:text="EV 0.0" />
         </LinearLayout>
 

@@ -21,6 +21,10 @@ import android.hardware.camera2.CaptureFailure
 import android.hardware.camera2.CaptureResult
 import android.hardware.camera2.TotalCaptureResult
 import com.gl1ch5.stabcam.util.Logger
+import com.gl1ch5.stabcam.stab.GyroTracker
+import com.gl1ch5.stabcam.stab.StabPipeline
+import com.gl1ch5.stabcam.stab.StabRecorder
+import com.gl1ch5.stabcam.stab.Stabilizer
 import android.view.Surface
 import com.gl1ch5.stabcam.config.AppConfig
 import com.gl1ch5.stabcam.config.Quality
@@ -50,6 +54,7 @@ class VideoCamera(private val ctx: Context, private val listener: Listener) {
         val stockEis: Boolean,
         val evIndex: Int = 0,
         val zoom: Float = 1f,
+        val stab: Boolean = false,
     )
 
     private val thread = HandlerThread("camera").apply { start() }
@@ -60,6 +65,9 @@ class VideoCamera(private val ctx: Context, private val listener: Listener) {
     private var device: CameraDevice? = null
     private var session: CameraCaptureSession? = null
     private var sessionHasRecorder = false
+    private var gyro: GyroTracker? = null
+    private var pipeline: StabPipeline? = null
+    private var stabRecording = false
     private var caps: CameraCaps? = null
     private var previewSurface: Surface? = null
     private var config: AppConfig? = null
@@ -114,11 +122,13 @@ class VideoCamera(private val ctx: Context, private val listener: Listener) {
 
     fun updateControls(c: Controls) = handler.post {
         controls = c
+        pipeline?.setZoom(c.zoom)
         applyRepeating()
     }
 
     fun startRecording(orientationHint: Int) = handler.post {
         if (isRecording || device == null) return@post
+        if (pipeline != null) { startStab(orientationHint); return@post }
         try {
             prepareRecorder(orientationHint)
             createSession(withRecorder = true)
@@ -131,6 +141,7 @@ class VideoCamera(private val ctx: Context, private val listener: Listener) {
 
     fun stopRecording() = handler.post {
         if (!isRecording) return@post
+        if (stabRecording) { stopStab(); return@post }
         isRecording = false
         val ok = runCatching {
             session?.stopRepeating()
@@ -149,7 +160,8 @@ class VideoCamera(private val ctx: Context, private val listener: Listener) {
         session = null
         sessionHasRecorder = false
 
-        val targets = buildList {
+        ensureStab()
+        val targets = pipeline?.let { listOf(it.cameraSurface) } ?: buildList {
             add(preview)
             if (withRecorder) recorder?.surface?.let { add(it) }
         }
@@ -211,7 +223,7 @@ class VideoCamera(private val ctx: Context, private val listener: Listener) {
     private fun applyRepeating() {
         val s = session ?: return
         val dev = device ?: return
-        val targets = buildList {
+        val targets = pipeline?.let { listOf(it.cameraSurface) } ?: buildList {
             previewSurface?.let { add(it) }
             if (sessionHasRecorder) recorder?.surface?.let { add(it) }
         }
@@ -228,7 +240,9 @@ class VideoCamera(private val ctx: Context, private val listener: Listener) {
     private var logged = 0
     private val logCallback = object : CameraCaptureSession.CaptureCallback() {
         override fun onCaptureCompleted(s: CameraCaptureSession, r: CaptureRequest, res: TotalCaptureResult) {
-            if (logged++ < 2) Logger.i(TAG, "Кадр: " + echo(res))
+            res.get(CaptureResult.SENSOR_EXPOSURE_TIME)?.let { pipeline?.setExposure(it) }
+            if (config?.stabReadoutNs == 0L) res.get(CaptureResult.SENSOR_ROLLING_SHUTTER_SKEW)?.let { pipeline?.setReadout(it) }
+            if (logged++ < 2) Logger.i(TAG, "Кадр: " + echo(res) + " exp=${res.get(CaptureResult.SENSOR_EXPOSURE_TIME)?.div(1000)}мкс")
         }
         override fun onCaptureFailed(s: CameraCaptureSession, r: CaptureRequest, f: CaptureFailure) {
             Logger.w(TAG, "Кадр не получен, reason=${f.reason}")
@@ -276,7 +290,7 @@ class VideoCamera(private val ctx: Context, private val listener: Listener) {
                 return
             }
             val st = steps[i]
-            val b = buildRequest(dev, listOfNotNull(previewSurface)) ?: return run(i + 1)
+            val b = buildRequest(dev, pipeline?.let { listOf(it.cameraSurface) } ?: listOfNotNull(previewSurface)) ?: return run(i + 1)
             st.mod(b)
             var last: TotalCaptureResult? = null
             var fails = 0
@@ -314,7 +328,7 @@ class VideoCamera(private val ctx: Context, private val listener: Listener) {
             )
             set(
                 CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE,
-                if (c.stockEis && caps.hasStockEis) CameraMetadata.CONTROL_VIDEO_STABILIZATION_MODE_ON
+                if (c.stockEis && caps.hasStockEis && pipeline == null) CameraMetadata.CONTROL_VIDEO_STABILIZATION_MODE_ON
                 else CameraMetadata.CONTROL_VIDEO_STABILIZATION_MODE_OFF
             )
             set(CaptureRequest.CONTROL_AE_EXPOSURE_COMPENSATION, c.evIndex.coerceIn(caps.evRange.lower, caps.evRange.upper))
@@ -360,9 +374,7 @@ class VideoCamera(private val ctx: Context, private val listener: Listener) {
         }
     }
 
-    private fun prepareRecorder(orientationHint: Int) {
-        val cfg = config!!
-        val q = quality
+    private fun createOutput(): ParcelFileDescriptor {
         val name = "STAB_" + SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date()) + ".mp4"
         val values = ContentValues().apply {
             put(MediaStore.Video.Media.DISPLAY_NAME, name)
@@ -375,7 +387,13 @@ class VideoCamera(private val ctx: Context, private val listener: Listener) {
         recordUri = uri
         val pfd = ctx.contentResolver.openFileDescriptor(uri, "rw") ?: error("open fd failed")
         recordPfd = pfd
+        return pfd
+    }
 
+    private fun prepareRecorder(orientationHint: Int) {
+        val cfg = config!!
+        val q = quality
+        val pfd = createOutput()
         val useHevc = cfg.codec.equals("hevc", true) &&
             CameraCaps.encoderSupports(MediaFormat.MIMETYPE_VIDEO_HEVC, q.width, q.height, q.fps)
 
@@ -416,7 +434,66 @@ class VideoCamera(private val ctx: Context, private val listener: Listener) {
         }
     }
 
+    private fun ensureStab() {
+        if (pipeline != null) return
+        val c = caps ?: return
+        val cfg = config ?: return
+        if (!(controls.stab && cfg.stabEnabled && c.facingBack && !quality.highSpeed)) return
+        try {
+            val g = GyroTracker(ctx, cfg.gyroAxes)
+            if (!g.start()) { Logger.e(TAG, "Стабилизация отключена: нет гироскопа"); return }
+            val k = c.intrinsicsFor(quality.width, quality.height)
+            val readout = if (cfg.stabReadoutNs > 0) cfg.stabReadoutNs else c.readoutNs ?: 8_000_000L
+            Logger.i(TAG, "Стабилизация: K=[${k.joinToString { "%.1f".format(it) }}] readout=${readout / 1000}мкс crop=${cfg.stabCrop} макс=${cfg.stabMaxAngle}°")
+            val p = StabPipeline(
+                g, quality.width, quality.height, k,
+                Stabilizer.Params(cfg.stabMaxAngle, cfg.stabTauMax, cfg.stabTauMin, cfg.stabVelTau), cfg.stabCrop, readout,
+            )
+            p.setZoom(controls.zoom)
+            p.setPreview(previewSurface)
+            gyro = g
+            pipeline = p
+        } catch (e: Exception) {
+            Logger.e(TAG, "Стабилизация не запустилась, обычный режим", e)
+            gyro?.stop(); gyro = null; pipeline = null
+        }
+    }
+
+    private fun startStab(orientationHint: Int) {
+        val p = pipeline ?: return
+        val cfg = config ?: return
+        val q = quality
+        try {
+            val pfd = createOutput()
+            val hevc = cfg.codec.equals("hevc", true) && CameraCaps.encoderSupports(MediaFormat.MIMETYPE_VIDEO_HEVC, q.width, q.height, q.fps)
+            val rec = StabRecorder(
+                pfd.fileDescriptor, q.width, q.height, q.fps, cfg.bitrateFor(q), hevc, orientationHint,
+                if (cfg.audio) StabRecorder.Audio(cfg.audioSampleRate, cfg.audioChannels, cfg.audioBitrate) else null,
+            )
+            p.startRecording(rec)
+            stabRecording = true
+            isRecording = true
+            listener.onRecordingStarted()
+        } catch (e: Exception) {
+            Logger.e(TAG, "stab record start", e)
+            cleanupRecorder(deleteFile = true)
+            listener.onError("Не удалось начать запись: ${e.message}")
+        }
+    }
+
+    private fun stopStab() {
+        val ok = pipeline?.stopRecording() ?: false
+        isRecording = false
+        stabRecording = false
+        val uri = recordUri
+        cleanupRecorder(deleteFile = !ok)
+        listener.onRecordingStopped(if (ok) uri else null)
+    }
+
     private fun closeInternal() {
+        if (stabRecording) stopStab()
+        pipeline?.release(); pipeline = null
+        gyro?.stop(); gyro = null
         if (isRecording) {
             isRecording = false
             val ok = runCatching { recorder?.stop() }.isSuccess

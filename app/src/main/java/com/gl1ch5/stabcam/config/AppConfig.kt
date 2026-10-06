@@ -7,6 +7,7 @@ class AppConfig(val json: JSONObject) {
     private val video = json.optJSONObject("video") ?: JSONObject()
     private val camera = json.optJSONObject("camera") ?: JSONObject()
     private val update = json.optJSONObject("update") ?: JSONObject()
+    private val stab = json.optJSONObject("stab") ?: JSONObject()
     private val diag = json.optJSONObject("diagnostics") ?: JSONObject()
     private val ui = json.optJSONObject("ui") ?: JSONObject()
 
@@ -46,6 +47,18 @@ class AppConfig(val json: JSONObject) {
     val updateRepo: String = update.optString("repo", "Gl1ch5/Video-Cam-Snapdragon")
     val updateTag: String = update.optString("tag", "nightly")
     val probeOnStart: Boolean = diag.optBoolean("probeOnStart", true)
+
+    val stabEnabled: Boolean = stab.optBoolean("enabled", true)
+    val stabCrop: Float = stab.optDouble("crop", 1.10).toFloat()
+    val stabMaxAngle: Double = stab.optDouble("maxAngleDeg", 4.0)
+    val stabTauMax: Double = stab.optDouble("tauMaxMs", 350.0) / 1000
+    val stabTauMin: Double = stab.optDouble("tauMinMs", 40.0) / 1000
+    val stabVelTau: Double = stab.optDouble("velTauMs", 250.0) / 1000
+    val stabReadoutNs: Long = (stab.optDouble("readoutMs", 0.0) * 1e6).toLong()
+    val gyroAxes: List<String> = buildList {
+        val a = stab.optJSONArray("gyroAxes") ?: return@buildList
+        for (i in 0 until a.length()) add(a.optString(i))
+    }
 
     val showInfo: Boolean = ui.optBoolean("showInfo", false)
 

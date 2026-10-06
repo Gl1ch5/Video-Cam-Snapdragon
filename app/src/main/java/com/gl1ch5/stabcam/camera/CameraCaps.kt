@@ -41,6 +41,31 @@ class CameraCaps(val id: String, val chars: CameraCharacteristics) {
     val edgeModes = chars.get(CameraCharacteristics.EDGE_AVAILABLE_EDGE_MODES)?.toList() ?: emptyList()
     val distortionModes = chars.get(CameraCharacteristics.DISTORTION_CORRECTION_AVAILABLE_MODES)?.toList() ?: emptyList()
 
+    /** Rolling-shutter readout time in ns, or null if the HAL does not report it. */
+    val readoutNs: Long? = null // reported per frame (CaptureResult.SENSOR_ROLLING_SHUTTER_SKEW)
+
+    /** Intrinsics [fx, fy, cx, cy] in pixels of an output frame of [w]x[h] (centre-cropped to its aspect from the active array). */
+    fun intrinsicsFor(w: Int, h: Int): FloatArray {
+        val arr = chars.get(CameraCharacteristics.SENSOR_INFO_PRE_CORRECTION_ACTIVE_ARRAY_SIZE)
+            ?: chars.get(CameraCharacteristics.SENSOR_INFO_ACTIVE_ARRAY_SIZE)!!
+        val aw = arr.width().toFloat(); val ah = arr.height().toFloat()
+        val cal = chars.get(CameraCharacteristics.LENS_INTRINSIC_CALIBRATION)
+        val fx: Float; val fy: Float; val cx: Float; val cy: Float
+        if (cal != null && cal.size >= 4 && cal[0] > 1f) {
+            fx = cal[0]; fy = cal[1]; cx = cal[2]; cy = cal[3]
+        } else {
+            val focal = chars.get(CameraCharacteristics.LENS_INFO_AVAILABLE_FOCAL_LENGTHS)?.firstOrNull() ?: 5f
+            val pw = chars.get(CameraCharacteristics.SENSOR_INFO_PHYSICAL_SIZE)?.width ?: 6f
+            fx = focal / pw * aw; fy = fx; cx = aw / 2; cy = ah / 2
+        }
+        var cropW = aw
+        var cropH = aw * h / w
+        if (cropH > ah) { cropH = ah; cropW = ah * w / h }
+        val offX = (aw - cropW) / 2; val offY = (ah - cropH) / 2
+        val s = w / cropW
+        return floatArrayOf(fx * s, fy * s, (cx - offX) * s, (cy - offY) * s)
+    }
+
     fun supportsHighSpeed(q: Quality): Boolean {
         val size = Size(q.width, q.height)
         val sizes = runCatching { map.highSpeedVideoSizes }.getOrNull() ?: return false

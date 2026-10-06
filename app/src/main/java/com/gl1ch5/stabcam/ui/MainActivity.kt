@@ -36,6 +36,8 @@ import com.gl1ch5.stabcam.config.AppConfig
 import com.gl1ch5.stabcam.config.ConfigRepository
 import com.gl1ch5.stabcam.config.Quality
 import com.gl1ch5.stabcam.update.Updater
+import com.gl1ch5.stabcam.stab.GyroTracker
+import org.json.JSONArray
 import com.gl1ch5.stabcam.util.Logger
 import java.util.Locale
 import kotlin.concurrent.thread
@@ -50,6 +52,7 @@ class MainActivity : Activity(), VideoCamera.Listener {
     private lateinit var previewFrame: AspectFrameLayout
     private lateinit var btnOis: TextView
     private lateinit var btnEis: TextView
+    private lateinit var btnStab: TextView
     private lateinit var btnEv: TextView
     private lateinit var btnQuality: TextView
     private lateinit var btnSettings: ImageButton
@@ -127,6 +130,7 @@ class MainActivity : Activity(), VideoCamera.Listener {
         previewFrame = findViewById(R.id.previewFrame)
         btnOis = findViewById(R.id.btnOis)
         btnEis = findViewById(R.id.btnEis)
+        btnStab = findViewById(R.id.btnStab)
         btnEv = findViewById(R.id.btnEv)
         btnQuality = findViewById(R.id.btnQuality)
         btnSettings = findViewById(R.id.btnSettings)
@@ -143,7 +147,7 @@ class MainActivity : Activity(), VideoCamera.Listener {
         info = findViewById(R.id.info)
         topBar = findViewById(R.id.topBar)
         shutterFlash = findViewById(R.id.shutterFlash)
-        listOf<View>(btnOis, btnEis, btnEv, btnQuality, btnSettings, btnFlip, thumb).forEach { pressable(it) }
+        listOf<View>(btnOis, btnEis, btnStab, btnEv, btnQuality, btnSettings, btnFlip, thumb).forEach { pressable(it) }
 
         btnRecord.setOnClickListener { toggleRecording() }
         btnOis.setOnClickListener {
@@ -152,6 +156,28 @@ class MainActivity : Activity(), VideoCamera.Listener {
             toast(if (controls.ois) "Аппаратный OIS: вкл" else "Аппаратный OIS: выкл")
         }
         btnOis.setOnLongClickListener { runProbe(); true }
+        btnStab.setOnClickListener {
+            if (camera.isRecording) return@setOnClickListener
+            if (caps?.facingBack != true) { toast("Стабилизация по гиро: только основная камера"); return@setOnClickListener }
+            controls = controls.copy(stab = !controls.stab)
+            repo.set("stab.enabled", controls.stab)
+            cfg = repo.load()
+            toast(if (controls.stab) "Гиро-стабилизация: вкл" else "Гиро-стабилизация: выкл")
+            openCamera()
+        }
+        btnStab.setOnLongClickListener {
+            if (camera.isRecording) return@setOnLongClickListener true
+            val cur = cfg.gyroAxes
+            val idx = GyroTracker.CANDIDATES.indexOf(cur).let { if (it < 0) -1 else it }
+            val next = GyroTracker.CANDIDATES[(idx + 1) % GyroTracker.CANDIDATES.size]
+            repo.set("stab.gyroAxes", JSONArray(next))
+            cfg = repo.load()
+            val label = next.joinToString(",")
+            Logger.i("App", "Оси гироскопа: $label (вариант ${(idx + 1) % GyroTracker.CANDIDATES.size + 1}/${GyroTracker.CANDIDATES.size})")
+            toast("Оси гиро: $label (${(idx + 1) % GyroTracker.CANDIDATES.size + 1}/${GyroTracker.CANDIDATES.size}). Потрясите телефон: картинка должна стоять")
+            openCamera()
+            true
+        }
         btnEis.setOnClickListener {
             if (caps?.hasStockEis != true) {
                 toast("Стоковый EIS недоступен")
@@ -200,7 +226,7 @@ class MainActivity : Activity(), VideoCamera.Listener {
         quality = cfg.quality
         Logger.i("App", "Конфиг: ${cfg.quality.id} ${cfg.codec} OIS=${cfg.ois} stockEis=${cfg.stockEis} force=${cfg.forceAllQualities} vendorTags=${cfg.vendorTags.size}")
         back = cfg.lensFacingBack
-        controls = controls.copy(ois = cfg.ois, stockEis = cfg.stockEis)
+        controls = controls.copy(ois = cfg.ois, stockEis = cfg.stockEis, stab = cfg.stabEnabled)
     }
 
     override fun onResume() {
@@ -255,7 +281,10 @@ class MainActivity : Activity(), VideoCamera.Listener {
         val supported = c.qualities(cfg.forceAllQualities)
         if (quality !in supported) quality = supported.firstOrNull() ?: Quality.FHD30
 
-        val size = c.previewSize()
+        val base = c.previewSize()
+        val useStab = controls.stab && c.facingBack && !quality.highSpeed
+        // With GL stabilisation the preview buffer is rendered by us, already upright (portrait).
+        val size = if (useStab) Size(base.height, base.width) else base
         if (pendingPreviewSize != size) {
             pendingPreviewSize = size
             surfaceReady = false
@@ -283,8 +312,7 @@ class MainActivity : Activity(), VideoCamera.Listener {
         if (list.isEmpty()) return
         quality = list[(list.indexOf(quality) + 1) % list.size]
         repo.set("video.quality", quality.id)
-        camera.open(c, preview.holder.surface, cfg, quality, controls)
-        updateUi()
+        openCamera()
     }
 
     private fun toggleRecording() {
@@ -400,6 +428,7 @@ class MainActivity : Activity(), VideoCamera.Listener {
         val c = caps ?: return
         styleToggle(btnOis, controls.ois, true)
         styleToggle(btnEis, controls.stockEis && c.hasStockEis, c.hasStockEis)
+        styleToggle(btnStab, controls.stab && c.facingBack, c.facingBack)
         val ev = controls.evIndex * c.evStep
         setTextFade(btnEv, String.format(Locale.US, "EV %+.1f", ev).replace("+0.0", "0.0"))
         btnEv.alpha = if (controls.evIndex == 0) 0.6f else 1f
@@ -471,7 +500,7 @@ class MainActivity : Activity(), VideoCamera.Listener {
     }
 
     private fun rotateIcons(deg: Float) {
-        val views = listOf<View>(btnFlip, thumb, btnSettings, btnQuality, btnOis, btnEis, btnEv) +
+        val views = listOf<View>(btnFlip, thumb, btnSettings, btnQuality, btnOis, btnEis, btnStab, btnEv) +
             (0 until zoomRow.childCount).map { zoomRow.getChildAt(it) }
         views.forEach { it.animate().rotation(deg).setDuration(200).start() }
     }

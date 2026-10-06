@@ -33,5 +33,19 @@
   },
   "diagnostics": {
     "probeOnStart": true
+  },
+  "stab": {
+    "enabled": true,
+    "crop": 1.1,
+    "maxAngleDeg": 4.0,
+    "tauMaxMs": 350,
+    "tauMinMs": 40,
+    "readoutMs": 0,
+    "gyroAxes": [
+      "-y",
+      "-x",
+      "-z"
+    ],
+    "velTauMs": 250
   }
 }

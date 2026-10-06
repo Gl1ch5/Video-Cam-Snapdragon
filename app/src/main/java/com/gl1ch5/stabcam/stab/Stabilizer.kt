@@ -1,0 +1,84 @@
+package com.gl1ch5.stabcam.stab
+
+import kotlin.math.exp
+
+/**
+ * Real-time (causal) orientation smoother.
+ *
+ * Constant-velocity model: the "virtual camera" advances with the slowly varying (intentional) angular velocity
+ * of the real camera, so steady pans are followed without lag, and is pulled toward the real orientation with a
+ * low-pass, which removes hand shake. The pull tightens as the offset approaches the crop margin
+ * ([Params.maxAngleDeg]); the offset is hard-limited to it.
+ */
+class Stabilizer(private val p: Params) {
+
+    class Params(
+        val maxAngleDeg: Double = 4.0,
+        /** Pull time constant when centred / when at the margin. */
+        val tauMaxSec: Double = 0.35,
+        val tauMinSec: Double = 0.04,
+        /** Time constant of the intentional-motion velocity estimate. */
+        val velTauSec: Double = 0.25,
+    )
+
+    private var qv: Quat? = null
+    private var prevReal: Quat? = null
+    private var prevT = 0L
+    private val vel = DoubleArray(3)
+
+    /** Last correction angle (deg), for stats. */
+    var lastCorrectionDeg = 0.0
+        private set
+
+    fun reset() { qv = null; prevReal = null; vel.fill(0.0) }
+
+    /** Feeds the real orientation at frame centre time [tNs]; returns the virtual camera orientation. */
+    fun update(tNs: Long, real: Quat): Quat {
+        val cur = qv
+        if (cur == null) {
+            qv = real; prevReal = real; prevT = tNs
+            lastCorrectionDeg = 0.0
+            return real
+        }
+        val dt = ((tNs - prevT) / 1e9).coerceIn(1e-4, 0.25)
+
+        val d = (prevReal!!.conj() * real).toRotVec()
+        val a = 1.0 - exp(-dt / p.velTauSec)
+        for (i in 0..2) vel[i] += (d[i] / dt - vel[i]) * a
+        val base = (cur * Quat.fromRotVec(vel[0] * dt, vel[1] * dt, vel[2] * dt)).normalized()
+
+        val maxRad = Math.toRadians(p.maxAngleDeg)
+        val tight = ((real.conj() * base).angle() / maxRad).coerceIn(0.0, 1.0)
+        val tau = p.tauMaxSec + (p.tauMinSec - p.tauMaxSec) * tight * tight
+        var v = Quat.slerp(base, real, 1.0 - exp(-dt / tau))
+
+        val off = (real.conj() * v).angle()
+        if (off > maxRad) v = Quat.slerp(real, v, maxRad / off)
+
+        qv = v
+        prevReal = real
+        prevT = tNs
+        lastCorrectionDeg = Math.toDegrees((real.conj() * v).angle())
+        return v
+    }
+
+    companion object {
+        const val ROWS = 8
+
+        /**
+         * Per-row source rotations (column-major mat3 each, [ROWS] of them) for the GL shader:
+         * R_row = realAt(row time)^-1 · virtual.
+         */
+        fun rowMatrices(virtual: Quat, firstRowNs: Long, readoutNs: Long, exposureNs: Long, realAt: (Long) -> Quat, out: FloatArray) {
+            for (k in 0 until ROWS) {
+                val t = firstRowNs + exposureNs / 2 + readoutNs * k / (ROWS - 1)
+                val m = (realAt(t).conj() * virtual).toMatrix() // row-major
+                for (r in 0..2) for (c in 0..2) out[k * 9 + c * 3 + r] = m[r * 3 + c].toFloat()
+            }
+        }
+
+        fun identityRows(out: FloatArray) {
+            for (k in 0 until ROWS) for (i in 0 until 9) out[k * 9 + i] = if (i % 4 == 0) 1f else 0f
+        }
+    }
+}
