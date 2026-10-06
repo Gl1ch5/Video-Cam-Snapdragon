@@ -24,6 +24,13 @@ object Logger {
         val f = File(ctx.filesDir, "stabcam.log")
         if (f.exists() && f.length() > MAX_FILE) f.renameTo(File(ctx.filesDir, "stabcam.old.log"))
         file = f
+        // Keep the tail of the previous run (it may hold a crash trace).
+        runCatching { f.readLines().takeLast(400).forEach { lines.addLast(it) } }
+        val prev = Thread.getDefaultUncaughtExceptionHandler()
+        Thread.setDefaultUncaughtExceptionHandler { t, e ->
+            runCatching { f.appendText("${fmt.format(Date())} F/CRASH: поток ${t.name}\n${Log.getStackTraceString(e)}\n") }
+            prev?.uncaughtException(t, e)
+        }
         i("Log", "=== запуск ${SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date())} ===")
     }
 

@@ -302,7 +302,7 @@ class MainActivity : Activity(), VideoCamera.Listener {
 
     // --- VideoCamera.Listener (camera thread) ---
 
-    override fun onSessionReady() {
+    override fun onSessionReady() = runOnUiThread {
         if (!probed && cfg.probeOnStart) {
             probed = true
             runProbe()
