@@ -6,4 +6,4 @@ build/
 .DS_Store
 /captures
 *.keystore
-*.jks
+/release.jks

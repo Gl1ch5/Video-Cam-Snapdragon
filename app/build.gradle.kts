@@ -25,7 +25,7 @@ android {
     }
 
     signingConfigs {
-        // Release signing from env (GitHub secrets). Falls back to debug key so nightly APKs are installable.
+        // Release signing from env (GitHub secrets); otherwise the shared dev key in ci/.
         create("release") {
             val ks = System.getenv("SIGNING_KEYSTORE_PATH")
             if (ks != null && file(ks).exists()) {
@@ -34,11 +34,11 @@ android {
                 keyAlias = System.getenv("SIGNING_KEY_ALIAS")
                 keyPassword = System.getenv("SIGNING_KEY_PASSWORD")
             } else {
-                val debug = getByName("debug")
-                storeFile = debug.storeFile
-                storePassword = debug.storePassword
-                keyAlias = debug.keyAlias
-                keyPassword = debug.keyPassword
+                // Shared dev key committed in ci/: the same on every machine and every CI run, so updates install over each other.
+                storeFile = rootProject.file("ci/stabcam-ci.jks")
+                storePassword = "stabcam-ci"
+                keyAlias = "stabcam"
+                keyPassword = "stabcam-ci"
             }
         }
     }

@@ -50,7 +50,7 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         if: steps.changes.outputs.skip != 'true'
 
-      - name: Prepare signing key
+      - name: Prepare signing key (optional)
         if: steps.changes.outputs.skip != 'true'
         env:
           KEYSTORE_BASE64: ${{ secrets.SIGNING_KEYSTORE_BASE64 }}
@@ -60,21 +60,16 @@ jobs:
         run: |
           if [ -n "$KEYSTORE_BASE64" ]; then
             echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.jks"
-            path="$RUNNER_TEMP/release.jks"; pass="$KS_PASSWORD"; alias="$KS_ALIAS"; keypass="$KS_KEY_PASSWORD"
+            {
+              echo "SIGNING_KEYSTORE_PATH=$RUNNER_TEMP/release.jks"
+              echo "SIGNING_KEYSTORE_PASSWORD=$KS_PASSWORD"
+              echo "SIGNING_KEY_ALIAS=$KS_ALIAS"
+              echo "SIGNING_KEY_PASSWORD=$KS_KEY_PASSWORD"
+            } >> "$GITHUB_ENV"
             echo "Using release keystore from secrets"
           else
-            # No secrets: generate a throwaway key so the APK is still installable.
-            path="$RUNNER_TEMP/ci.jks"; pass="android"; alias="stabcam"; keypass="android"
-            keytool -genkeypair -keystore "$path" -storepass "$pass" -keypass "$keypass" \
-              -alias "$alias" -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=StabCam CI"
-            echo "No signing secrets: using a generated CI key (updates over a different key need uninstall)"
+            echo "No signing secrets: using the shared dev key from ci/"
           fi
-          {
-            echo "SIGNING_KEYSTORE_PATH=$path"
-            echo "SIGNING_KEYSTORE_PASSWORD=$pass"
-            echo "SIGNING_KEY_ALIAS=$alias"
-            echo "SIGNING_KEY_PASSWORD=$keypass"
-          } >> "$GITHUB_ENV"
 
       - name: Build release APK
         if: steps.changes.outputs.skip != 'true'

@@ -6,6 +6,8 @@ import org.json.JSONObject
 class AppConfig(val json: JSONObject) {
     private val video = json.optJSONObject("video") ?: JSONObject()
     private val camera = json.optJSONObject("camera") ?: JSONObject()
+    private val update = json.optJSONObject("update") ?: JSONObject()
+    private val diag = json.optJSONObject("diagnostics") ?: JSONObject()
     private val ui = json.optJSONObject("ui") ?: JSONObject()
 
     val quality: Quality = Quality.parse(video.optString("quality", "4K60"))
@@ -40,17 +42,26 @@ class AppConfig(val json: JSONObject) {
     /** Offer every quality even if Camera2 does not advertise it (OEMs hide modes from third-party apps). */
     val forceAllQualities: Boolean = camera.optBoolean("forceAllQualities", false)
 
+    val updateAuto: Boolean = update.optBoolean("auto", true)
+    val updateRepo: String = update.optString("repo", "Gl1ch5/Video-Cam-Snapdragon")
+    val updateTag: String = update.optString("tag", "nightly")
+    val probeOnStart: Boolean = diag.optBoolean("probeOnStart", true)
+
     val showInfo: Boolean = ui.optBoolean("showInfo", false)
 
     data class VendorTag(val name: String, val type: String, val value: Any?)
 }
 
 enum class Quality(val id: String, val width: Int, val height: Int, val fps: Int, val label: String, val defaultMbps: Double) {
+    UHD120("4K120", 3840, 2160, 120, "4K·120", 150.0),
     UHD60("4K60", 3840, 2160, 60, "4K·60", 120.0),
     UHD30("4K30", 3840, 2160, 30, "4K·30", 80.0),
     K33_60("3.3K60", 3280, 1856, 60, "3.3K·60", 70.0),
     FHD60("1080p60", 1920, 1080, 60, "1080·60", 40.0),
     FHD30("1080p30", 1920, 1080, 30, "1080·30", 24.0);
+
+    /** >60 fps goes through a Camera2 constrained high-speed session. */
+    val highSpeed: Boolean get() = fps > 60
 
     companion object {
         fun parse(id: String) = entries.firstOrNull { it.id.equals(id, ignoreCase = true) } ?: UHD60

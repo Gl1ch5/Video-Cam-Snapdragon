@@ -23,7 +23,7 @@ class CameraCaps(val id: String, val chars: CameraCharacteristics) {
     private val oisModes = chars.get(CameraCharacteristics.LENS_INFO_AVAILABLE_OPTICAL_STABILIZATION)?.toList() ?: emptyList()
     val hasOis = CameraMetadata.LENS_OPTICAL_STABILIZATION_MODE_ON in oisModes
 
-    private val eisModes = chars.get(CameraCharacteristics.CONTROL_AVAILABLE_VIDEO_STABILIZATION_MODES)?.toList() ?: emptyList()
+    val eisModes = chars.get(CameraCharacteristics.CONTROL_AVAILABLE_VIDEO_STABILIZATION_MODES)?.toList() ?: emptyList()
     val hasStockEis = CameraMetadata.CONTROL_VIDEO_STABILIZATION_MODE_ON in eisModes
 
     val hasOisData = CameraMetadata.STATISTICS_OIS_DATA_MODE_ON in
@@ -41,7 +41,14 @@ class CameraCaps(val id: String, val chars: CameraCharacteristics) {
     val edgeModes = chars.get(CameraCharacteristics.EDGE_AVAILABLE_EDGE_MODES)?.toList() ?: emptyList()
     val distortionModes = chars.get(CameraCharacteristics.DISTORTION_CORRECTION_AVAILABLE_MODES)?.toList() ?: emptyList()
 
+    fun supportsHighSpeed(q: Quality): Boolean {
+        val size = Size(q.width, q.height)
+        val sizes = runCatching { map.highSpeedVideoSizes }.getOrNull() ?: return false
+        return size in sizes && map.getHighSpeedVideoFpsRangesFor(size).any { it.upper >= q.fps && it.lower <= q.fps }
+    }
+
     fun supports(q: Quality): Boolean {
+        if (q.highSpeed) return supportsHighSpeed(q)
         val size = Size(q.width, q.height)
         val sizes = map.getOutputSizes(MediaRecorder::class.java) ?: return false
         if (size !in sizes) return false
@@ -51,7 +58,7 @@ class CameraCaps(val id: String, val chars: CameraCharacteristics) {
     }
 
     fun qualities(forceAll: Boolean): List<Quality> =
-        if (forceAll) Quality.entries.filter { it.fps <= (fpsRanges.maxOfOrNull { r -> r.upper } ?: 30) } else Quality.entries.filter { supports(it) }
+        if (forceAll) Quality.entries.filter { if (it.highSpeed) supportsHighSpeed(it) else it.fps <= (fpsRanges.maxOfOrNull { r -> r.upper } ?: 30) } else Quality.entries.filter { supports(it) }
 
     val supportedQualities: List<Quality> get() = qualities(false)
 

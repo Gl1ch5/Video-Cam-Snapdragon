@@ -32,6 +32,8 @@ import com.gl1ch5.stabcam.camera.VideoCamera
 import com.gl1ch5.stabcam.config.AppConfig
 import com.gl1ch5.stabcam.config.ConfigRepository
 import com.gl1ch5.stabcam.config.Quality
+import com.gl1ch5.stabcam.update.Updater
+import com.gl1ch5.stabcam.util.Logger
 import java.util.Locale
 import kotlin.concurrent.thread
 
@@ -72,10 +74,15 @@ class MainActivity : Activity(), VideoCamera.Listener {
     private var recordStart = 0L
     private var lastVideo: Uri? = null
 
+    private var diagText: String? = null
+    private var probed = false
+    private var updateChecked = false
+
     private lateinit var orientationListener: OrientationEventListener
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        Logger.init(this)
         setContentView(R.layout.activity_main)
         repo = ConfigRepository(this)
         camera = VideoCamera(this, this)
@@ -137,6 +144,7 @@ class MainActivity : Activity(), VideoCamera.Listener {
             repo.set("camera.ois", controls.ois)
             toast(if (controls.ois) "Аппаратный OIS: вкл" else "Аппаратный OIS: выкл")
         }
+        btnOis.setOnLongClickListener { runProbe(); true }
         btnEis.setOnClickListener {
             if (caps?.hasStockEis != true) {
                 toast("Стоковый EIS недоступен")
@@ -159,6 +167,7 @@ class MainActivity : Activity(), VideoCamera.Listener {
             override fun onStopTrackingTouch(sb: SeekBar) {}
         })
         btnQuality.setOnClickListener { cycleQuality() }
+        btnQuality.setOnLongClickListener { startActivity(Intent(this, LogActivity::class.java)); true }
         btnSettings.setOnClickListener {
             if (!camera.isRecording) startActivity(Intent(this, SettingsActivity::class.java))
         }
@@ -182,6 +191,7 @@ class MainActivity : Activity(), VideoCamera.Listener {
     private fun loadConfig() {
         cfg = repo.load()
         quality = cfg.quality
+        Logger.i("App", "Конфиг: ${cfg.quality.id} ${cfg.codec} OIS=${cfg.ois} stockEis=${cfg.stockEis} force=${cfg.forceAllQualities} vendorTags=${cfg.vendorTags.size}")
         back = cfg.lensFacingBack
         controls = controls.copy(ois = cfg.ois, stockEis = cfg.stockEis)
     }
@@ -233,6 +243,8 @@ class MainActivity : Activity(), VideoCamera.Listener {
         }
         back = c.facingBack
         caps = c
+        Logger.i("App", "Устройство: ${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}, SoC ${android.os.Build.SOC_MODEL}, preset ${repo.activePreset?.name}")
+        Logger.i("App", "Камера ${c.id}: OIS(заявлен)=${c.hasOis} EIS=${c.hasStockEis} качества=${c.qualities(cfg.forceAllQualities).joinToString { it.label }}")
         val supported = c.qualities(cfg.forceAllQualities)
         if (quality !in supported) quality = supported.firstOrNull() ?: Quality.FHD30
 
@@ -245,12 +257,14 @@ class MainActivity : Activity(), VideoCamera.Listener {
         }
         if (!surfaceReady) return
 
+        Logger.i("App", "Открываю камеру: ${quality.label}")
         camera.open(c, preview.holder.surface, cfg, quality, controls)
         updateUi()
     }
 
     private fun setControls(c: VideoCamera.Controls) {
         controls = c
+        Logger.i("App", "Управление: OIS=${c.ois} EIS=${c.stockEis} EV=${c.evIndex} zoom=${c.zoom}")
         camera.updateControls(c)
         updateUi()
     }
@@ -281,6 +295,17 @@ class MainActivity : Activity(), VideoCamera.Listener {
 
     // --- VideoCamera.Listener (camera thread) ---
 
+    override fun onSessionReady() {
+        if (!probed && cfg.probeOnStart) {
+            probed = true
+            runProbe()
+        }
+        if (!updateChecked && cfg.updateAuto) {
+            updateChecked = true
+            checkUpdate(manual = false)
+        }
+    }
+
     override fun onRecordingStarted() = runOnUiThread {
         btnRecord.isEnabled = true
         btnRecord.recording = true
@@ -303,6 +328,7 @@ class MainActivity : Activity(), VideoCamera.Listener {
     }
 
     override fun onError(message: String) = runOnUiThread {
+        Logger.e("App", message)
         btnRecord.isEnabled = true
         toast(message)
     }
@@ -341,9 +367,9 @@ class MainActivity : Activity(), VideoCamera.Listener {
 
         val codec = if (cfg.codec.equals("hevc", true)) "HEVC" else "H.264"
         val preset = repo.activePreset?.name ?: "default"
-        info.text = "${quality.width}×${quality.height}@${quality.fps} · $codec ${cfg.bitrateFor(quality) / 1_000_000} Мбит/с · " +
+        info.text = diagText ?: "${quality.width}×${quality.height}@${quality.fps} · $codec ${cfg.bitrateFor(quality) / 1_000_000} Мбит/с · " +
             "OIS ${if (controls.ois) "вкл" else "выкл"} · EIS ${if (controls.stockEis) "вкл" else "выкл"} · $preset"
-        info.visibility = if (cfg.showInfo && !camera.isRecording) View.VISIBLE else View.GONE
+        info.visibility = if ((cfg.showInfo || diagText != null) && !camera.isRecording) View.VISIBLE else View.GONE
     }
 
     private fun styleToggle(v: TextView, on: Boolean, available: Boolean) {
@@ -418,6 +444,53 @@ class MainActivity : Activity(), VideoCamera.Listener {
         thread {
             val bmp: Bitmap? = runCatching { contentResolver.loadThumbnail(uri, Size(256, 256), null) }.getOrNull()
             runOnUiThread { bmp?.let { thumb.setImageBitmap(it) } }
+        }
+    }
+
+    private fun runProbe() {
+        if (camera.isRecording) return
+        showDiag("Проверяю стабилизацию…")
+        camera.probe { lines ->
+            runOnUiThread {
+                val ois = lines.firstOrNull { it.contains("OIS вкл (стандарт)") }
+                val sum = (if (ois?.startsWith("✔") == true) "OIS: камера подтвердила включение" else "OIS: камера НЕ подтвердила (см. лог)") +
+                    "\n" + lines.count { it.startsWith("✔") } + " принято, " + lines.count { it.startsWith("✖") } + " отклонено · подробности: меню → Лог"
+                showDiag(sum, 12000)
+            }
+        }
+    }
+
+    private fun showDiag(text: String, hideAfter: Long = 0) {
+        diagText = text
+        info.text = text
+        info.visibility = View.VISIBLE
+        if (hideAfter > 0) main.postDelayed({ if (diagText == text) { diagText = null; updateUi() } }, hideAfter)
+    }
+
+    private fun checkUpdate(manual: Boolean) {
+        val u = Updater(this, cfg.updateRepo, cfg.updateTag)
+        thread {
+            val r = u.fetchLatest()
+            when {
+                r == null -> if (manual) runOnUiThread { toast("Не удалось проверить обновление (см. лог)") }
+                !u.isNewer(r) -> {
+                    Logger.i(Updater.TAG, "Версия актуальна (${u.currentId()})")
+                    if (manual) runOnUiThread { toast("Установлена последняя версия") }
+                }
+                else -> {
+                    Logger.i(Updater.TAG, "Найдена новая версия ${r.id} (сейчас ${u.currentId()})")
+                    if (!u.canInstall()) {
+                        runOnUiThread { toast("Разрешите установку из этого приложения"); u.requestInstallPermission() }
+                        return@thread
+                    }
+                    runOnUiThread { showDiag("Обновление ${r.id}: загрузка…") }
+                    val f = u.download(r) { p -> runOnUiThread { showDiag("Обновление ${r.id}: $p%") } }
+                    if (f != null) {
+                        runOnUiThread { showDiag("Устанавливаю ${r.id}…", 8000) }
+                        runCatching { u.install(f) }.onFailure { Logger.e(Updater.TAG, "Установка", it) }
+                    } else runOnUiThread { showDiag("Не удалось скачать обновление", 6000) }
+                }
+            }
         }
     }
 

@@ -20,6 +20,10 @@ import com.gl1ch5.stabcam.BuildConfig
 import com.gl1ch5.stabcam.R
 import com.gl1ch5.stabcam.camera.CameraCaps
 import com.gl1ch5.stabcam.config.ConfigRepository
+import com.gl1ch5.stabcam.update.Updater
+import com.gl1ch5.stabcam.util.Logger
+import android.content.Intent
+import kotlin.concurrent.thread
 import org.json.JSONObject
 
 /**
@@ -61,7 +65,26 @@ class SettingsActivity : Activity() {
     private fun build() {
         content.removeAllViews()
         title("Настройки", 26f)
-        caption("StabCam ${BuildConfig.VERSION_NAME}")
+        caption("StabCam ${BuildConfig.VERSION_NAME} (код ${BuildConfig.VERSION_CODE})")
+        val updStatus = caption("Обновления: автопроверка при запуске ${if (repo.load().updateAuto) "включена" else "выключена"}")
+        row(
+            button("Проверить обновление") {
+                val cfg = repo.load()
+                val u = Updater(this, cfg.updateRepo, cfg.updateTag)
+                updStatus.text = "Проверяю…"
+                thread {
+                    val r = u.fetchLatest()
+                    runOnUiThread {
+                        updStatus.text = when {
+                            r == null -> "Не удалось проверить (репозиторий приватный или нет сети) — см. лог"
+                            !u.isNewer(r) -> "Установлена последняя версия (${u.currentId()})"
+                            else -> "Доступна ${r.id}. Откройте камеру: обновление скачается и установится само"
+                        }
+                    }
+                }
+            },
+            button("Лог") { startActivity(Intent(this, LogActivity::class.java)) },
+        )
 
         section("Профиль устройства")
         val preset = repo.activePreset
@@ -219,11 +242,11 @@ class SettingsActivity : Activity() {
         setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
     })
 
-    private fun caption(text: String) = content.addView(TextView(this).apply {
+    private fun caption(text: String): TextView = TextView(this).apply {
         this.text = text
         setTextColor(getColor(R.color.text_dim))
         setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
-    }, matchWrap().apply { topMargin = dp(4) })
+    }.also { content.addView(it, matchWrap().apply { topMargin = dp(4) }) }
 
     private fun mono(text: String): TextView = TextView(this).apply {
         this.text = text

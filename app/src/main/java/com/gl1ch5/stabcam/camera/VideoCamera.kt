@@ -17,7 +17,10 @@ import android.os.Handler
 import android.os.HandlerThread
 import android.os.ParcelFileDescriptor
 import android.provider.MediaStore
-import android.util.Log
+import android.hardware.camera2.CaptureFailure
+import android.hardware.camera2.CaptureResult
+import android.hardware.camera2.TotalCaptureResult
+import com.gl1ch5.stabcam.util.Logger
 import android.view.Surface
 import com.gl1ch5.stabcam.config.AppConfig
 import com.gl1ch5.stabcam.config.Quality
@@ -36,6 +39,7 @@ class VideoCamera(private val ctx: Context, private val listener: Listener) {
 
     interface Listener {
         fun onError(message: String)
+        fun onSessionReady()
         fun onRecordingStarted()
         fun onRecordingStopped(uri: Uri?)
     }
@@ -80,6 +84,7 @@ class VideoCamera(private val ctx: Context, private val listener: Listener) {
         try {
             mgr.openCamera(caps.id, executor, object : CameraDevice.StateCallback() {
                 override fun onOpened(d: CameraDevice) {
+                    Logger.i(TAG, "Камера ${caps.id} открыта")
                     device = d
                     createSession(withRecorder = false)
                 }
@@ -118,7 +123,7 @@ class VideoCamera(private val ctx: Context, private val listener: Listener) {
             prepareRecorder(orientationHint)
             createSession(withRecorder = true)
         } catch (e: Exception) {
-            Log.e(TAG, "prepare failed", e)
+            Logger.e(TAG, "prepare failed", e)
             cleanupRecorder(deleteFile = true)
             listener.onError("Не удалось начать запись: ${e.message}")
         }
@@ -149,20 +154,21 @@ class VideoCamera(private val ctx: Context, private val listener: Listener) {
             if (withRecorder) recorder?.surface?.let { add(it) }
         }
         val outputs = targets.map { OutputConfiguration(it) }
-        val sessionConfig = SessionConfiguration(
-            SessionConfiguration.SESSION_REGULAR, outputs, executor,
+        val stateCb =
             object : CameraCaptureSession.StateCallback() {
                 override fun onConfigured(s: CameraCaptureSession) {
                     session = s
                     sessionHasRecorder = withRecorder
+                    Logger.i(TAG, "Сессия настроена: ${quality.label}, запись=$withRecorder")
                     applyRepeating()
+                    if (!withRecorder) listener.onSessionReady()
                     if (withRecorder && recorder != null) {
                         try {
                             recorder?.start()
                             isRecording = true
                             listener.onRecordingStarted()
                         } catch (e: Exception) {
-                            Log.e(TAG, "recorder start failed", e)
+                            Logger.e(TAG, "recorder start failed", e)
                             cleanupRecorder(deleteFile = true)
                             listener.onError("Запись не стартовала: ${e.message}")
                             createSession(withRecorder = false)
@@ -171,13 +177,28 @@ class VideoCamera(private val ctx: Context, private val listener: Listener) {
                 }
 
                 override fun onConfigureFailed(s: CameraCaptureSession) {
+                    Logger.e(TAG, "Сессия не настроилась: ${quality.label}, запись=$withRecorder")
                     listener.onError("Камера не поддерживает ${quality.label} в этой конфигурации")
                     if (withRecorder) {
                         cleanupRecorder(deleteFile = true)
                         createSession(withRecorder = false)
                     }
                 }
-            })
+            }
+        if (withRecorder && quality.highSpeed) {
+            Logger.i(TAG, "Constrained high-speed сессия: ${quality.label}")
+            try {
+                @Suppress("DEPRECATION")
+                dev.createConstrainedHighSpeedCaptureSession(targets, stateCb, handler)
+            } catch (e: Exception) {
+                Logger.e(TAG, "High-speed сессия", e)
+                listener.onError("High-speed: ${e.message}")
+                cleanupRecorder(deleteFile = true)
+                createSession(withRecorder = false)
+            }
+            return
+        }
+        val sessionConfig = SessionConfiguration(SessionConfiguration.SESSION_REGULAR, outputs, executor, stateCb)
         // Session parameters let the HAL pick the right sensor mode (fps, stabilization) up front.
         buildRequest(dev, targets)?.let { sessionConfig.sessionParameters = it.build() }
         try {
@@ -195,8 +216,84 @@ class VideoCamera(private val ctx: Context, private val listener: Listener) {
             if (sessionHasRecorder) recorder?.surface?.let { add(it) }
         }
         val builder = buildRequest(dev, targets) ?: return
-        runCatching { s.setRepeatingRequest(builder.build(), null, handler) }
-            .onFailure { Log.w(TAG, "setRepeatingRequest", it) }
+        if (s is android.hardware.camera2.CameraConstrainedHighSpeedCaptureSession) {
+            runCatching { s.setRepeatingBurst(s.createHighSpeedRequestList(builder.build()), logCallback, handler) }
+                .onFailure { Logger.w(TAG, "setRepeatingBurst", it) }
+            return
+        }
+        runCatching { s.setRepeatingRequest(builder.build(), logCallback, handler) }
+            .onFailure { Logger.w(TAG, "setRepeatingRequest", it) }
+    }
+
+    private var logged = 0
+    private val logCallback = object : CameraCaptureSession.CaptureCallback() {
+        override fun onCaptureCompleted(s: CameraCaptureSession, r: CaptureRequest, res: TotalCaptureResult) {
+            if (logged++ < 2) Logger.i(TAG, "Кадр: " + echo(res))
+        }
+        override fun onCaptureFailed(s: CameraCaptureSession, r: CaptureRequest, f: CaptureFailure) {
+            Logger.w(TAG, "Кадр не получен, reason=${f.reason}")
+        }
+    }
+
+    private fun echo(res: TotalCaptureResult): String =
+        "OIS=${name(res.get(CaptureResult.LENS_OPTICAL_STABILIZATION_MODE))} " +
+            "EIS=${name(res.get(CaptureResult.CONTROL_VIDEO_STABILIZATION_MODE))} " +
+            "fps-range=${res.request.get(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE)}"
+
+    private fun name(v: Int?) = when (v) { null -> "нет в результате"; 0 -> "выкл(0)"; 1 -> "вкл(1)"; else -> "$v" }
+
+    /**
+     * Runs on the live preview session: tries standard stabilization modes and every vendor "stabiliz*" key,
+     * reports which values the HAL accepted/echoed. Echo proves the request was honoured, not that the lens moves.
+     */
+    fun probe(done: (List<String>) -> Unit) = handler.post {
+        val dev = device; val s = session; val caps = caps
+        if (dev == null || s == null || caps == null || isRecording) return@post
+        val out = mutableListOf<String>()
+        class Step(val label: String, val mod: (CaptureRequest.Builder) -> Unit, val check: (TotalCaptureResult?, Int) -> String)
+        val steps = mutableListOf<Step>()
+        fun okFail(label: String) = { _: TotalCaptureResult?, fails: Int -> if (fails == 0) "✔ $label: принят" else "✖ $label: отклонён ($fails ош.)" }
+        steps += Step("OIS выкл (стандарт)", { it.set(CaptureRequest.LENS_OPTICAL_STABILIZATION_MODE, 0) }) { r, f ->
+            "• OIS выкл → результат ${name(r?.get(CaptureResult.LENS_OPTICAL_STABILIZATION_MODE))}" }
+        steps += Step("OIS вкл (стандарт)", { it.set(CaptureRequest.LENS_OPTICAL_STABILIZATION_MODE, 1) }) { r, f ->
+            val v = r?.get(CaptureResult.LENS_OPTICAL_STABILIZATION_MODE)
+            (if (v == 1) "✔" else "✖") + " OIS вкл → результат ${name(v)}" + if (caps.hasOis) "" else " (камера не заявляет OIS)" }
+        for (m in caps.eisModes) steps += Step("EIS режим $m", {
+            it.set(CaptureRequest.LENS_OPTICAL_STABILIZATION_MODE, 1)
+            it.set(CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE, m)
+        }) { r, f -> "• EIS режим $m → результат ${r?.get(CaptureResult.CONTROL_VIDEO_STABILIZATION_MODE)}" + if (f > 0) " (ошибок кадра: $f)" else "" }
+        val vendor = caps.chars.availableCaptureRequestKeys.map { it.name }.filter { it.contains("stabiliz", true) && !it.startsWith("android.") }
+        for (k in vendor) for (v in 0..3) steps += Step("$k=$v", {
+            it.set(CaptureRequest.LENS_OPTICAL_STABILIZATION_MODE, 1)
+            runCatching { it.set(CaptureRequest.Key(k, Int::class.javaObjectType), v) }
+        }, okFail("$k=$v"))
+
+        fun run(i: Int) {
+            if (i >= steps.size) {
+                applyRepeating()
+                out.forEach { Logger.i("Probe", it) }
+                done(out)
+                return
+            }
+            val st = steps[i]
+            val b = buildRequest(dev, listOfNotNull(previewSurface)) ?: return run(i + 1)
+            st.mod(b)
+            var last: TotalCaptureResult? = null
+            var fails = 0
+            val cb = object : CameraCaptureSession.CaptureCallback() {
+                override fun onCaptureCompleted(s: CameraCaptureSession, r: CaptureRequest, res: TotalCaptureResult) { last = res }
+                override fun onCaptureFailed(s: CameraCaptureSession, r: CaptureRequest, f: CaptureFailure) { fails++ }
+            }
+            try {
+                session?.setRepeatingRequest(b.build(), cb, handler)
+            } catch (e: Exception) {
+                out += "✖ ${st.label}: ${e.message}"
+                return run(i + 1)
+            }
+            handler.postDelayed({ out += st.check(last, fails); run(i + 1) }, 450)
+        }
+        Logger.i(TAG, "Диагностика стабилизации: ${steps.size} проверок")
+        run(0)
     }
 
     private fun buildRequest(dev: CameraDevice, targets: List<Surface>): CaptureRequest.Builder? {
@@ -206,7 +303,7 @@ class VideoCamera(private val ctx: Context, private val listener: Listener) {
         return dev.createCaptureRequest(CameraDevice.TEMPLATE_RECORD).apply {
             targets.forEach { addTarget(it) }
             set(CaptureRequest.CONTROL_MODE, CameraMetadata.CONTROL_MODE_AUTO)
-            set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, caps.fpsRangeFor(quality.fps))
+            set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, caps.fpsRangeFor(if (quality.highSpeed && !sessionHasRecorder) 30 else quality.fps))
             if (CameraMetadata.CONTROL_AF_MODE_CONTINUOUS_VIDEO in caps.afModes) {
                 set(CaptureRequest.CONTROL_AF_MODE, CameraMetadata.CONTROL_AF_MODE_CONTINUOUS_VIDEO)
             }
@@ -257,9 +354,9 @@ class VideoCamera(private val ctx: Context, private val listener: Listener) {
                     "float" -> b.set(CaptureRequest.Key(t.name, Float::class.javaObjectType), (t.value as Number).toFloat())
                     "boolean" -> b.set(CaptureRequest.Key(t.name, Boolean::class.javaObjectType), t.value as Boolean)
                     "byte" -> b.set(CaptureRequest.Key(t.name, Byte::class.javaObjectType), (t.value as Number).toByte())
-                    else -> Log.w(TAG, "Unknown vendor tag type ${t.type}")
+                    else -> Logger.w(TAG, "Unknown vendor tag type ${t.type}")
                 }
-            }.onFailure { Log.w(TAG, "Vendor tag ${t.name} rejected", it) }
+            }.onFailure { Logger.w(TAG, "Vendor tag ${t.name} rejected", it) }
         }
     }
 

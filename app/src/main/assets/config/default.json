@@ -2,7 +2,12 @@
   "video": {
     "quality": "4K60",
     "codec": "hevc",
-    "bitrateMbps": { "4K60": 120, "4K30": 80, "1080p60": 40, "1080p30": 24 },
+    "bitrateMbps": {
+      "4K60": 120,
+      "4K30": 80,
+      "1080p60": 40,
+      "1080p30": 24
+    },
     "audio": true,
     "audioBitrateKbps": 256,
     "audioSampleRate": 48000,
@@ -20,5 +25,13 @@
   },
   "ui": {
     "showInfo": false
+  },
+  "update": {
+    "auto": true,
+    "repo": "Gl1ch5/Video-Cam-Snapdragon",
+    "tag": "nightly"
+  },
+  "diagnostics": {
+    "probeOnStart": true
   }
 }
