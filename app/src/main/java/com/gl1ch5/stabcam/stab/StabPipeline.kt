@@ -188,7 +188,7 @@ class StabPipeline(
         lutSize = size.toFloat()
     }
 
-    /** Applies [lut] (null = off) with [strength] 0..1 from the next frame. Ignored for 10-bit HLG output. */
+    /** Applies [lut] (null = off) with [strength] 0..1 from the next frame. In HLG it grades the HLG signal. */
     fun setLut(lut: Lut?, strength: Float) {
         handler.post {
             if (lut == null) { lutAmt = 0f; return@post }
@@ -196,7 +196,7 @@ class StabPipeline(
                 egl.makeCurrent(dummy!!)
                 uploadLut(lut.size, lut.rgb)
                 lutAmt = strength.coerceIn(0f, 1f)
-                Logger.i(TAG, "LUT: ${lut.name} (${lut.size}³), сила $lutAmt" + if (is10bit) " (в HLG не применяется)" else "")
+                Logger.i(TAG, "LUT: ${lut.name} (${lut.size}³), сила $lutAmt")
             }.onFailure { Logger.e(TAG, "LUT", it) }
         }
     }
@@ -374,7 +374,7 @@ class StabPipeline(
         GLES20.glActiveTexture(GLES20.GL_TEXTURE2)
         GLES20.glBindTexture(GLES30.GL_TEXTURE_3D, lutTex)
         GLES20.glUniform1i(l["uLut"]!!, 2)
-        GLES20.glUniform1f(l["uLutAmt"]!!, if (is10bit || rawMode) 0f else lutAmt)
+        GLES20.glUniform1f(l["uLutAmt"]!!, if (rawMode) 0f else lutAmt)
         GLES20.glUniform1f(l["uLutN"]!!, lutSize)
         GLES20.glActiveTexture(GLES20.GL_TEXTURE0)
         GLES20.glUniform1f(l["uSharp"]!!, if (rawMode) 0f else sharpen)
@@ -492,7 +492,7 @@ class StabPipeline(
                 vec3 s = R * d;
                 vec2 q = vec2(s.x / s.z * uK.x + uK.z, s.y / s.z * uK.y + uK.w) / uSize;
                 if (q.x < 0.0 || q.x > 1.0 || q.y < 0.0 || q.y > 1.0) { o = vec4(0.0, 0.0, 0.0, 1.0); return; }
-                if (uPreview > 0 || uBicubic == 0) { o = vec4(grade(outc(fetch(q))), 1.0); return; }
+                if (uPreview > 0 || uBicubic == 0) { o = vec4(outc(grade(fetch(q))), 1.0); return; }
                 vec3 c = catmull(q);
                 if (uSharp > 0.0) {
                     vec2 px = 1.0 / uSize;
@@ -506,7 +506,7 @@ class StabPipeline(
                     // Limited overshoot: no halos around edges.
                     c = clamp(sh, min(lo, c) - 0.02, max(hi, c) + 0.02);
                 }
-                o = vec4(grade(outc(c)), 1.0);
+                o = vec4(outc(grade(c)), 1.0);
             }"""
         val p = GLES20.glCreateProgram()
         GLES20.glAttachShader(p, compile(GLES20.GL_VERTEX_SHADER, vs))

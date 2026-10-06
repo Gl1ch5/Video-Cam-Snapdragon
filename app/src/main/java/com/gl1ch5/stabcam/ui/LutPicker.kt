@@ -68,7 +68,7 @@ class LutPicker(
 
         val scroll = ScrollView(ctx).apply {
             addView(list)
-            background = GradientDrawable().apply { cornerRadius = dp(22).toFloat(); setColor(0xE6141414.toInt()); setStroke(dp(1), 0x33FFFFFF) }
+            background = GradientDrawable().apply { cornerRadius = dp(22).toFloat(); setColor(0xB3141418.toInt()); setStroke(dp(1), 0x33FFFFFF) }
             clipToOutline = true
             isVerticalScrollBarEnabled = false
         }

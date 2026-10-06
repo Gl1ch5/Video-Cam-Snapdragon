@@ -21,7 +21,7 @@ class AppConfig(val json: JSONObject) {
     fun bitrateFor(q: Quality): Int {
         val map = video.optJSONObject("bitrateMbps")
         val mbps = map?.optDouble(q.id, Double.NaN)?.takeIf { !it.isNaN() } ?: q.defaultMbps
-        return (mbps * 1_000_000).toInt()
+        return (mbps * video.optDouble("bitrateScale", 1.0) * 1_000_000).toInt()
     }
 
     val lensFacingBack: Boolean = camera.optString("lens", "back") != "front"

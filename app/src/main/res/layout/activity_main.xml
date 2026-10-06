@@ -164,20 +164,6 @@
         android:paddingEnd="12dp"
         android:text="LUT" />
 
-    <!-- POST (raw capture + gyro log) -->
-    <TextView
-        android:id="@+id/btnPost"
-        style="@style/TopText"
-        android:layout_width="wrap_content"
-        android:layout_height="34dp"
-        android:layout_gravity="bottom|end"
-        android:layout_marginEnd="14dp"
-        android:layout_marginBottom="142dp"
-        android:background="@drawable/bg_pill"
-        android:paddingStart="12dp"
-        android:paddingEnd="12dp"
-        android:text="ПОСТ" />
-
     <!-- Zoom -->
     <LinearLayout
         android:id="@+id/zoomRow"

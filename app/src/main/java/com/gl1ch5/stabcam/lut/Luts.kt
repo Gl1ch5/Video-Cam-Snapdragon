@@ -48,6 +48,17 @@ object Luts {
         else -> generate(id)
     }
 
+    /** Copies a picked .cube into the app and returns its id ("file:name.cube"), or null if it is not a usable 3D LUT. Blocking. */
+    fun importCube(ctx: Context, uri: android.net.Uri): String? {
+        val name = (ctx.contentResolver.query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)
+            ?.use { if (it.moveToFirst()) it.getString(0) else null } ?: "lut.cube").let { if (it.endsWith(".cube", true)) it else "$it.cube" }
+        val text = runCatching { ctx.contentResolver.openInputStream(uri)!!.bufferedReader().use { it.readText() } }.getOrNull() ?: return null
+        val lut = parseCube("file:$name", name.removeSuffix(".cube"), text) ?: return null
+        File(userDir(ctx), name).writeText(text)
+        Logger.i("LUT", "Импортирован $name (${lut.size}³)")
+        return "file:$name"
+    }
+
     fun generate(id: String): Lut? {
         val f = look(id) ?: return null
         val data = ByteArray(N * N * N * 3)
