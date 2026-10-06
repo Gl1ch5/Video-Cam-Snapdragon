@@ -78,7 +78,7 @@ class Stabilizer(private val p: Params) {
         }
 
         fun identityRows(out: FloatArray) {
-            for (k in 0 until ROWS) for (i in 0 until 9) out[k * 9 + i] = if (i % 4 == 0) 1f else 0f
+            for (k in 0 until out.size / 9) for (i in 0 until 9) out[k * 9 + i] = if (i % 4 == 0) 1f else 0f
         }
     }
 }

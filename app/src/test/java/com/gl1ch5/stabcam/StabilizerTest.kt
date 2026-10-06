@@ -78,3 +78,15 @@ class StabilizerTest {
         assertTrue("offset $last", last < 1.0)
     }
 }
+
+class IdentityRowsTest {
+    @Test
+    fun identityFillsAnySizeWithoutOverflow() {
+        val one = FloatArray(9)
+        Stabilizer.identityRows(one)
+        assertEquals(1f, one[0], 0f); assertEquals(1f, one[4], 0f); assertEquals(1f, one[8], 0f); assertEquals(0f, one[1], 0f)
+        val rows = FloatArray(Stabilizer.ROWS * 9)
+        Stabilizer.identityRows(rows)
+        assertEquals(1f, rows[rows.size - 1], 0f)
+    }
+}

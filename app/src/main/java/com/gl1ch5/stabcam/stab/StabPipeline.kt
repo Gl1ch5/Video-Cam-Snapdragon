@@ -291,7 +291,7 @@ class StabPipeline(
         if (have) {
             val m = (pq!!.conj() * qNow).toMatrix() // current-frame ray -> previous-frame ray
             for (r in 0..2) for (c in 0..2) relRows[c * 3 + r] = m[r * 3 + c].toFloat()
-        } else Stabilizer.identityRows(relRows)
+        } else for (i in 0 until 9) relRows[i] = if (i % 4 == 0) 1f else 0f
         GLES30.glUniformMatrix3fv(locDn["uRel"]!!, 1, false, relRows, 0)
         GLES20.glUniform1f(locDn["uStr"]!!, denoise)
         GLES20.glUniform1f(locDn["uSigma"]!!, denoiseSigma)
