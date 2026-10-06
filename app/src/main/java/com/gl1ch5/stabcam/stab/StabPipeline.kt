@@ -387,10 +387,10 @@ class StabPipeline(
         val now = System.nanoTime()
         if (statT == 0L) statT = now
         if (now - statT > 2_000_000_000L) {
-            Logger.i(TAG, "%.1f fps, кадр %.1f мс, интервал ср %.1f макс %.1f мс (норма %.1f), пропусков %d, поправка ср %.2f° макс %.2f° кроп %.3f, гиро %s, тепло %d, стаб %s".format(
+            Logger.i(TAG, "%.1f fps, кадр %.1f мс, интервал ср %.1f макс %.1f мс (норма %.1f), пропусков %d, поправка ср %.2f° макс %.2f° кроп %.3f, горизонт %.1f°, гиро %s, тепло %d, стаб %s".format(
                 statN * 1e9 / (now - statT), statRenderNs / statN / 1e6,
                 if (statDtN > 0) statDtSum / statDtN / 1e6 else 0.0, statMaxDt / 1e6, 1000.0 / fps, statDrops,
-                statCorr / statN, statMaxCorr, stabilizer.crop,
+                statCorr / statN, statMaxCorr, stabilizer.crop, stabilizer.horizonNow,
                 if (gyro.latestTimeNs() - ts > -50_000_000L) "ok" else "ОТСТАЁТ", thermal(), if (enabled) "вкл" else "выкл"))
             statT = now; statN = 0; statRenderNs = 0; statCorr = 0.0; statMaxCorr = 0.0
             if (statWn > 0) Logger.i(TAG, "Угловая скорость rms (°/с, оси устройства): x=%.1f y=%.1f z=%.1f".format(

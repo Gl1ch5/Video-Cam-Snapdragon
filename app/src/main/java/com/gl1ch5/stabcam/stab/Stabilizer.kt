@@ -37,6 +37,8 @@ class Stabilizer(private val p: Params) {
     private val vel = DoubleArray(3)
     @Volatile var intr: FrameFit.Intr? = p.intr
     private var horizon = 0.0
+    /** Current horizon-lock roll applied, degrees (diagnostics). */
+    val horizonNow: Double get() = horizon
     private var peakZoom = 1.0
 
     /** Current zoom-in factor: only as large as the recent shake needs, so the picture stays as sharp as possible. */
