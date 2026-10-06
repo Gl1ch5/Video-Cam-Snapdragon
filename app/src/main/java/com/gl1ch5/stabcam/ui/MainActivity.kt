@@ -1,7 +1,10 @@
 package com.gl1ch5.stabcam.ui
 
 import android.Manifest
+import android.animation.ValueAnimator
 import android.app.Activity
+import android.view.MotionEvent
+import android.view.animation.OvershootInterpolator
 import android.content.ContentUris
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -75,6 +78,8 @@ class MainActivity : Activity(), VideoCamera.Listener {
     private var lastVideo: Uri? = null
 
     private var diagText: String? = null
+    private var prevZoom = 1f
+    private lateinit var shutterFlash: View
     private var probed = false
     private var updateChecked = false
 
@@ -137,6 +142,8 @@ class MainActivity : Activity(), VideoCamera.Listener {
         recTime = findViewById(R.id.recTime)
         info = findViewById(R.id.info)
         topBar = findViewById(R.id.topBar)
+        shutterFlash = findViewById(R.id.shutterFlash)
+        listOf<View>(btnOis, btnEis, btnEv, btnQuality, btnSettings, btnFlip, thumb).forEach { pressable(it) }
 
         btnRecord.setOnClickListener { toggleRecording() }
         btnOis.setOnClickListener {
@@ -155,7 +162,7 @@ class MainActivity : Activity(), VideoCamera.Listener {
             toast(if (controls.stockEis) "Стоковый EIS: вкл (кроп + мыло)" else "Стоковый EIS: выкл")
         }
         btnEv.setOnClickListener {
-            evPanel.visibility = if (evPanel.visibility == View.VISIBLE) View.GONE else View.VISIBLE
+            fade(evPanel, evPanel.visibility != View.VISIBLE, View.GONE, rise = true)
         }
         evSeek.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
             override fun onProgressChanged(sb: SeekBar, p: Int, fromUser: Boolean) {
@@ -336,13 +343,49 @@ class MainActivity : Activity(), VideoCamera.Listener {
     // --- UI ---
 
     private fun setRecordingUi(rec: Boolean) {
-        val v = if (rec) View.INVISIBLE else View.VISIBLE
-        topBar.visibility = v
-        btnFlip.visibility = v
-        thumb.visibility = v
-        info.visibility = if (rec || !cfg.showInfo) View.GONE else View.VISIBLE
-        evPanel.visibility = View.GONE
-        recIndicator.visibility = if (rec) View.VISIBLE else View.GONE
+        fade(topBar, !rec)
+        fade(btnFlip, !rec)
+        fade(thumb, !rec)
+        fade(evPanel, false, View.GONE)
+        fade(info, !rec && (cfg.showInfo || diagText != null), View.GONE)
+        fade(recIndicator, rec, View.GONE, rise = true)
+        shutterFlash.alpha = 0.45f
+        shutterFlash.animate().alpha(0f).setDuration(240).start()
+    }
+
+    /** Fade (and optionally slight rise) instead of an instant visibility flip. */
+    private fun fade(v: View, show: Boolean, hidden: Int = View.INVISIBLE, rise: Boolean = false) {
+        v.animate().cancel()
+        if (show) {
+            if (v.visibility != View.VISIBLE) {
+                v.alpha = 0f
+                if (rise) v.translationY = dp(8).toFloat()
+                v.visibility = View.VISIBLE
+            }
+            v.animate().alpha(1f).translationY(0f).setDuration(180).start()
+        } else if (v.visibility == View.VISIBLE) {
+            v.animate().alpha(0f).setDuration(140).withEndAction { v.visibility = hidden }.start()
+        }
+    }
+
+    private fun pressable(v: View) {
+        v.setOnTouchListener { view, ev ->
+            when (ev.action) {
+                MotionEvent.ACTION_DOWN -> view.animate().scaleX(0.88f).scaleY(0.88f).setDuration(70).start()
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL ->
+                    view.animate().scaleX(1f).scaleY(1f).setDuration(220).setInterpolator(OvershootInterpolator(3f)).start()
+            }
+            false
+        }
+    }
+
+    private fun setTextFade(tv: TextView, text: String) {
+        if (tv.text.toString() == text) return
+        tv.animate().cancel()
+        tv.animate().alpha(0f).setDuration(90).withEndAction {
+            tv.text = text
+            tv.animate().alpha(1f).setDuration(140).start()
+        }.start()
     }
 
     private fun tickTimer() {
@@ -358,22 +401,29 @@ class MainActivity : Activity(), VideoCamera.Listener {
         styleToggle(btnOis, controls.ois, true)
         styleToggle(btnEis, controls.stockEis && c.hasStockEis, c.hasStockEis)
         val ev = controls.evIndex * c.evStep
-        btnEv.text = String.format(Locale.US, "EV %+.1f", ev).replace("+0.0", "0.0")
+        setTextFade(btnEv, String.format(Locale.US, "EV %+.1f", ev).replace("+0.0", "0.0"))
+        btnEv.alpha = if (controls.evIndex == 0) 0.6f else 1f
         evValue.text = String.format(Locale.US, "%+.1f", ev)
         evSeek.max = c.evRange.upper - c.evRange.lower
         evSeek.progress = controls.evIndex - c.evRange.lower
-        btnQuality.text = quality.label
+        setTextFade(btnQuality, quality.label)
         buildZoomChips(c)
 
         val codec = if (cfg.codec.equals("hevc", true)) "HEVC" else "H.264"
         val preset = repo.activePreset?.name ?: "default"
         info.text = diagText ?: "${quality.width}×${quality.height}@${quality.fps} · $codec ${cfg.bitrateFor(quality) / 1_000_000} Мбит/с · " +
             "OIS ${if (controls.ois) "вкл" else "выкл"} · EIS ${if (controls.stockEis) "вкл" else "выкл"} · $preset"
-        info.visibility = if ((cfg.showInfo || diagText != null) && !camera.isRecording) View.VISIBLE else View.GONE
+        fade(info, (cfg.showInfo || diagText != null) && !camera.isRecording, View.GONE)
     }
 
     private fun styleToggle(v: TextView, on: Boolean, available: Boolean) {
-        v.setTextColor(getColor(if (on) R.color.accent else R.color.text_dim))
+        val to = getColor(if (on) R.color.accent else R.color.text_dim)
+        val from = v.currentTextColor
+        if (from != to) ValueAnimator.ofArgb(from, to).apply {
+            duration = 180
+            addUpdateListener { v.setTextColor(it.animatedValue as Int) }
+            start()
+        }
         v.paintFlags = if (on) v.paintFlags and Paint.STRIKE_THRU_TEXT_FLAG.inv()
         else v.paintFlags or Paint.STRIKE_THRU_TEXT_FLAG
         v.alpha = if (available) 1f else 0.4f
@@ -392,7 +442,9 @@ class MainActivity : Activity(), VideoCamera.Listener {
             return
         }
         zoomRow.visibility = View.VISIBLE
-        val size = dp(40)
+        val size = dp(32)
+        val changed = kotlin.math.abs(prevZoom - controls.zoom) > 0.01f
+        prevZoom = controls.zoom
         for (z in stops) {
             val selected = kotlin.math.abs(controls.zoom - z) < 0.01f
             val label = when {
@@ -403,13 +455,18 @@ class MainActivity : Activity(), VideoCamera.Listener {
             val chip = TextView(this).apply {
                 text = label
                 gravity = Gravity.CENTER
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, if (selected) 15f else 13f)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, if (selected) 13f else 12f)
                 setTextColor(getColor(if (selected) R.color.accent else R.color.text))
                 if (selected) setBackgroundResource(R.drawable.bg_circle)
                 rotation = -deviceOrientation.toFloat()
                 setOnClickListener { setControls(controls.copy(zoom = z)) }
+                pressable(this)
+                if (selected && changed) {
+                    scaleX = 0.7f; scaleY = 0.7f
+                    animate().scaleX(1f).scaleY(1f).setDuration(260).setInterpolator(OvershootInterpolator(2.5f)).start()
+                }
             }
-            zoomRow.addView(chip, LinearLayout.LayoutParams(size, size).apply { marginStart = dp(4); marginEnd = dp(4) })
+            zoomRow.addView(chip, LinearLayout.LayoutParams(size, size).apply { marginStart = dp(3); marginEnd = dp(3) })
         }
     }
 
@@ -463,7 +520,7 @@ class MainActivity : Activity(), VideoCamera.Listener {
     private fun showDiag(text: String, hideAfter: Long = 0) {
         diagText = text
         info.text = text
-        info.visibility = View.VISIBLE
+        fade(info, true, View.GONE)
         if (hideAfter > 0) main.postDelayed({ if (diagText == text) { diagText = null; updateUi() } }, hideAfter)
     }
 
