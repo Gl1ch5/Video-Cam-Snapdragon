@@ -53,3 +53,15 @@ class ModuleSanitizeTest {
         assertTrue(ModuleManager.check(bad) is ModuleManager.Result.Error)
     }
 }
+
+/** Android's ICU regex rejects an unescaped '}' that java.util.regex accepts: keep the patterns portable. */
+class PortableRegexTest {
+    @Test
+    fun noUnescapedClosingBraceInMainRegexes() {
+        val src = java.io.File("src/main/java").walkTopDown().filter { it.extension == "kt" }.joinToString("\n") { it.readText() }
+        val bad = Regex("""Regex\("[^"\n]*[^\\{0-9,]\}[^"\n]*"\)""").findAll(src).map { it.value }.filter { !it.contains("{") || it.indexOf('}') < it.indexOf('{') || true }.toList()
+        // every '}' inside a Regex literal must be escaped (\\}) unless it closes a {n,m} quantifier
+        val offenders = bad.filter { lit -> Regex("""(?<!\\)\}""").findAll(lit).any { m -> !Regex("""\{\d+(,\d*)?$""").containsMatchIn(lit.substring(0, m.range.first)) } }
+        org.junit.Assert.assertTrue(offenders.toString(), offenders.isEmpty())
+    }
+}

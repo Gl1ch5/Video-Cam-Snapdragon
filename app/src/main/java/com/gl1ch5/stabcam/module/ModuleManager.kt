@@ -266,7 +266,7 @@ class ModuleManager(private val ctx: Context) {
         private fun resolveAny(v: Any, values: Map<String, Any>): Any = when (v) {
             is JSONObject -> resolve(v, values)
             is JSONArray -> JSONArray().also { a -> for (i in 0 until v.length()) a.put(resolveAny(v.get(i), values)) }
-            is String -> Regex("^\\$\\{([a-zA-Z0-9_]+)}$").matchEntire(v)?.let { values[it.groupValues[1]] } ?: v
+            is String -> Regex("^\\$\\{([a-zA-Z0-9_]+)\\}$").matchEntire(v)?.let { values[it.groupValues[1]] } ?: v
             else -> v
         }
 
@@ -284,7 +284,12 @@ class ModuleManager(private val ctx: Context) {
         fun parse(j: JSONObject, enabled: Boolean = false) = Module(j.getString("id"), j, enabled)
 
         /** Validates [text] without installing. Tolerates typical AI formatting mistakes (see [sanitize]). */
-        fun check(text: String): Result {
+        fun check(text: String): Result = try { checkImpl(text) } catch (e: Exception) {
+            Logger.e("Module", "check", e)
+            Result.Error("Внутренняя ошибка проверки: ${e.javaClass.simpleName}: ${e.message?.take(100)}")
+        }
+
+        private fun checkImpl(text: String): Result {
             val (clean, notes) = sanitize(text)
             val j = try { JSONObject(clean) } catch (e: Exception) {
                 val msg = e.message.orEmpty()
@@ -303,7 +308,7 @@ class ModuleManager(private val ctx: Context) {
                 val bad = ArrayList<String>(); val keys = ArrayList<String>()
                 walk(it, "", keys, bad)
                 if (bad.isNotEmpty()) return Result.Error("Недопустимые ключи конфига: ${bad.take(5).joinToString()}")
-                val unknown = Regex("\\$\\{([a-zA-Z0-9_]+)}").findAll(it.toString()).map { m -> m.groupValues[1] }.filter { k -> k !in settingKeys }.toSet()
+                val unknown = Regex("\\$\\{([a-zA-Z0-9_]+)\\}").findAll(it.toString()).map { m -> m.groupValues[1] }.filter { k -> k !in settingKeys }.toSet()
                 if (unknown.isNotEmpty()) return Result.Error("В config используются необъявленные настройки: ${unknown.joinToString()}")
                 if (keys.isNotEmpty()) summary += "Настройки: ${keys.size}"
             }

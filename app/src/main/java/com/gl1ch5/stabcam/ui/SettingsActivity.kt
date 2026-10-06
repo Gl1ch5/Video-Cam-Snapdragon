@@ -130,6 +130,13 @@ class SettingsActivity : Activity() {
     private fun show(i: Int) {
         content.removeAllViews()
         val eff = repo.effectiveJson()
+        try { buildTab(i, eff) } catch (e: Exception) {
+            com.gl1ch5.stabcam.util.Logger.e("Settings", "Вкладка ${tabs[i]}", e)
+            note("Не удалось построить вкладку: ${e.javaClass.simpleName}: ${e.message?.take(120)}. Подробности в логе (Система → Лог).")
+        }
+    }
+
+    private fun buildTab(i: Int, eff: JSONObject) {
         when (tabs[i]) {
             "Главное" -> home(eff)
             "Видео" -> video(eff)
