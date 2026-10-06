@@ -78,21 +78,26 @@ class Stabilizer(private val p: Params) {
         var v = Quat.slerp(base, real, 1.0 - exp(-dt / tau))
 
         // Horizon lock: counter-rotate about the optical axis toward level, smoothed, limited to the configured range.
+        // The roll is applied to the OUTPUT only; the smoothing state stays roll-free, otherwise it would pile up every frame.
+        var rollQ = Quat.IDENTITY
+        var rolled = false
         if (p.horizonDeg > 0 && upImg != null) {
             val target = Math.toDegrees(HorizonLock.correction(upImg)).coerceIn(-p.horizonDeg, p.horizonDeg)
             horizon += (target - horizon) * (1.0 - exp(-dt / 0.5))
-            v = (v * Quat.fromRotVec(0.0, 0.0, Math.toRadians(horizon))).normalized()
+            rollQ = Quat.fromRotVec(0.0, 0.0, Math.toRadians(horizon)); rolled = true
         }
 
-        var offQ = real.conj() * v
+        var out = if (rolled) (v * rollQ).normalized() else v
+        var offQ = real.conj() * out
         if (fit != null) {
             val rv = offQ.toRotVec()
             val k = FrameFit.scaleToFit(rv, crop, fit)
-            if (k < 1.0) { v = (real * Quat.fromRotVec(rv[0] * k, rv[1] * k, rv[2] * k)).normalized(); offQ = real.conj() * v }
+            if (k < 1.0) { out = (real * Quat.fromRotVec(rv[0] * k, rv[1] * k, rv[2] * k)).normalized(); offQ = real.conj() * out }
         } else {
             val off = offQ.angle()
-            if (off > maxRad) { v = Quat.slerp(real, v, maxRad / off); offQ = real.conj() * v }
+            if (off > maxRad) { out = Quat.slerp(real, out, maxRad / off); offQ = real.conj() * out }
         }
+        v = if (rolled) (out * rollQ.conj()).normalized() else out
 
         qv = v
         prevReal = real
@@ -106,7 +111,7 @@ class Stabilizer(private val p: Params) {
         val target = peakZoom.coerceIn(p.minCrop, p.maxCrop)
         val rate = if (target > crop) p.attackSec else p.releaseSec
         crop += (target - crop) * (1.0 - exp(-dt / rate))
-        return v
+        return out
     }
 
     companion object {

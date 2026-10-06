@@ -94,6 +94,19 @@ class AdaptiveCropTest {
         assertTrue("calm $calm shaky $shaky", shaky > calm + 0.03)
         assertTrue(shaky <= 1.12 + 1e-9 && calm >= 1.03 - 1e-9)
     }
+
+    @Test
+    fun horizonRollDoesNotAccumulateInState() {
+        val st = Stabilizer(Stabilizer.Params(maxAngleDeg = 20.0, maxCrop = 1.6, horizonDeg = 10.0))
+        val t = Math.toRadians(8.0)
+        val up = doubleArrayOf(Math.sin(t), -Math.cos(t), 0.0)
+        var t0 = 0L
+        repeat(900) { st.update(t0, Quat.IDENTITY, up); t0 += 16_666_667L }
+        // Static camera: output offset equals the (bounded) level correction and the smoothing state carries no roll.
+        assertTrue(st.horizonNow in -10.0..10.0)
+        assertEquals(Math.abs(st.horizonNow), st.lastCorrectionDeg, 0.3)
+        assertTrue(st.virtualDebug().angle() < Math.toRadians(0.5))
+    }
 }
 
 class IdentityRowsTest {
