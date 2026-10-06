@@ -48,6 +48,7 @@ class VideoCamera(private val ctx: Context, private val listener: Listener) {
     interface Listener {
         fun onError(message: String)
         fun onSessionReady()
+        fun onThermalDegraded(on: Boolean) {}
         fun onQualityUnsupported() {}
         fun onRecordingStarted()
         fun onRecordingStopped(uri: Uri?)
@@ -265,9 +266,12 @@ class VideoCamera(private val ctx: Context, private val listener: Listener) {
     }
 
     private var logged = 0
+    private var shutterWarned = false
     private val logCallback = object : CameraCaptureSession.CaptureCallback() {
         override fun onCaptureCompleted(s: CameraCaptureSession, r: CaptureRequest, res: TotalCaptureResult) {
             res.get(CaptureResult.SENSOR_EXPOSURE_TIME)?.let { pipeline?.setExposure(it) }
+            res.get(CaptureResult.SENSOR_SENSITIVITY)?.let { pipeline?.setIso(it) }
+            res.get(CaptureResult.LENS_INTRINSIC_CALIBRATION)?.let { raw -> caps?.intrinsicsFromResult(raw, quality.width, quality.height)?.let { pipeline?.setIntrinsics(it) } }
             if (config?.stabReadoutNs == 0L) res.get(CaptureResult.SENSOR_ROLLING_SHUTTER_SKEW)?.let { pipeline?.setReadout(it) }
             if (logged++ < 2) Logger.i(TAG, "Кадр: " + echo(res) + " exp=${res.get(CaptureResult.SENSOR_EXPOSURE_TIME)?.div(1000)}мкс")
         }
@@ -360,7 +364,7 @@ class VideoCamera(private val ctx: Context, private val listener: Listener) {
             )
             set(CaptureRequest.CONTROL_AE_EXPOSURE_COMPENSATION, c.evIndex.coerceIn(caps.evRange.lower, caps.evRange.upper))
             set(CaptureRequest.CONTROL_ZOOM_RATIO, c.zoom.coerceIn(caps.zoomRange.lower, caps.zoomRange.upper))
-            pickMode(cfg.noiseReduction, caps.nrModes, mapOf(
+            pickMode(if (cfg.postMode && pipeline != null) cfg.postCameraNr else cfg.noiseReduction, caps.nrModes, mapOf(
                 "off" to CameraMetadata.NOISE_REDUCTION_MODE_OFF,
                 "fast" to CameraMetadata.NOISE_REDUCTION_MODE_FAST,
                 "hq" to CameraMetadata.NOISE_REDUCTION_MODE_HIGH_QUALITY,
@@ -376,6 +380,12 @@ class VideoCamera(private val ctx: Context, private val listener: Listener) {
                 "fast" to CameraMetadata.DISTORTION_CORRECTION_MODE_FAST,
                 "hq" to CameraMetadata.DISTORTION_CORRECTION_MODE_HIGH_QUALITY,
             ))?.let { set(CaptureRequest.DISTORTION_CORRECTION_MODE, it) }
+            if (cfg.shutterCapMs > 0.0) {
+                if (caps.supportsExposurePriority) {
+                    set(CaptureRequest.CONTROL_AE_PRIORITY_MODE, CameraMetadata.CONTROL_AE_PRIORITY_MODE_SENSOR_EXPOSURE_TIME_PRIORITY)
+                    set(CaptureRequest.SENSOR_EXPOSURE_TIME, (cfg.shutterCapMs * 1e6).toLong())
+                } else if (!shutterWarned) { shutterWarned = true; Logger.w(TAG, "Ограничение выдержки: камера не поддерживает приоритет выдержки (нужен Android 15+)") }
+            }
             applyVendorTags(this, caps, cfg)
         }
     }
@@ -484,7 +494,7 @@ class VideoCamera(private val ctx: Context, private val listener: Listener) {
         fun make(h: Boolean) = StabPipeline(
             g, quality.width, quality.height, k,
             Stabilizer.Params(cfg.stabMaxAngle, cfg.stabTauMax, cfg.stabTauMin, cfg.stabVelTau, tanHalfFov = (quality.width / 2.0) / k[0], minCrop = cfg.stabMinCrop.toDouble(), maxCrop = cfg.stabCrop.toDouble(), intr = FrameFit.Intr(k[0].toDouble(), k[1].toDouble(), k[2].toDouble(), k[3].toDouble(), quality.width.toDouble(), quality.height.toDouble()), horizonDeg = cfg.stabHorizonDeg), cfg.stabCrop, readout,
-            cfg.stabSharpen, cfg.stabBicubic, cfg.stabDenoise, cfg.stabDenoiseSigma, quality.fps, { runCatching { ctx.getSystemService(android.os.PowerManager::class.java).currentThermalStatus }.getOrDefault(-1) }, cfg.stabTimeOffsetMs, h,
+            cfg.stabSharpen, cfg.stabBicubic, cfg.stabDenoise, cfg.stabDenoiseSigma, quality.fps, { runCatching { ctx.getSystemService(android.os.PowerManager::class.java).currentThermalStatus }.getOrDefault(-1) }, cfg.stabTimeOffsetMs, h, cfg.stabDenoiseAuto,
         )
         val p = try { make(hdr) } catch (e: Exception) {
             Logger.e(TAG, "Конвейер ${if (hdr) "10-бит" else ""} не запустился", e)
@@ -494,6 +504,7 @@ class VideoCamera(private val ctx: Context, private val listener: Listener) {
         p.setZoom(controls.zoom)
         p.previewRot = cfg.stabPreviewRot
         p.rawMode = cfg.postMode
+        p.onDegraded = { on -> listener.onThermalDegraded(on) }
         p.setLut(lut, lutStrength)
         p.setPreview(previewSurface)
         gyro = g
@@ -547,7 +558,8 @@ class VideoCamera(private val ctx: Context, private val listener: Listener) {
         val g = gyro ?: return
         val (t, w, n) = g.stopLog()
         val base = p.lastBaseTs
-        val (ft, fe, fn) = p.frameLog()
+        val fl = p.frameLog()
+        val ft = fl.ts; val fe = fl.exp; val fn = fl.n
         if (!ok || base < 0 || fn == 0) return
         val cfg = config ?: return
         val c = caps ?: return
@@ -563,7 +575,7 @@ class VideoCamera(private val ctx: Context, private val listener: Listener) {
                 for (i in 0 until gn) append(String.format(java.util.Locale.US, "%.3f,%.5f,%.5f,%.5f\n", (gt[i] - base) / 1e6, gv[i * 3], gv[i * 3 + 1], gv[i * 3 + 2]))
             })
             val frames = org.json.JSONArray()
-            for (i in 0 until fn) frames.put(org.json.JSONArray().put(ft[i] - base).put(fe[i]))
+            for (i in 0 until fn) frames.put(org.json.JSONArray().put(ft[i] - base).put(fe[i]).put(fl.iso[i]))
             val k = c.intrinsicsFor(q.width, q.height)
             val meta = org.json.JSONObject()
                 .put("version", 1).put("video", recordName).put("uri", uri?.toString() ?: "")

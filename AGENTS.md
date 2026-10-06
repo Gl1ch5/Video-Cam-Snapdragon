@@ -90,3 +90,10 @@ Android-приложение «только видео» с **собственн
 ## 10. Документы
 
 `README.md` (для пользователей), `docs/MODULES.md` (формат модов), `docs/ROADMAP.md` (сделано/открыто), `docs/example.module`.
+
+## Дополнительные gotchas (батч по отчётам)
+- Порядок параметров конструктора `StabPipeline`: `denoiseAuto` — последний.
+- `Stabilizer.ROWS = 16`; шейдер `uR[ROWS]` должен совпадать.
+- Интринсики в StabPipeline по кадрам (`kCur`), не `kBase`.
+- Сигма денойза зависит от ISO (`sigmaEff()`); `FrameLog` содержит iso третьим элементом.
+- POST camera NR по умолчанию "minimal" — осознанный компромисс.

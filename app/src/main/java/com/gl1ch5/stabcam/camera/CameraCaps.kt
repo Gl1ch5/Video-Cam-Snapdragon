@@ -41,6 +41,17 @@ class CameraCaps(val id: String, val chars: CameraCharacteristics) {
     val edgeModes = chars.get(CameraCharacteristics.EDGE_AVAILABLE_EDGE_MODES)?.toList() ?: emptyList()
     val distortionModes = chars.get(CameraCharacteristics.DISTORTION_CORRECTION_AVAILABLE_MODES)?.toList() ?: emptyList()
 
+    private val arrW: Float get() = (chars.get(CameraCharacteristics.SENSOR_INFO_PRE_CORRECTION_ACTIVE_ARRAY_SIZE) ?: chars.get(CameraCharacteristics.SENSOR_INFO_ACTIVE_ARRAY_SIZE)!!).width().toFloat()
+    private val arrH: Float get() = (chars.get(CameraCharacteristics.SENSOR_INFO_PRE_CORRECTION_ACTIVE_ARRAY_SIZE) ?: chars.get(CameraCharacteristics.SENSOR_INFO_ACTIVE_ARRAY_SIZE)!!).height().toFloat()
+
+    /** Per-frame calibration (focus breathing etc.) from a capture result → output-frame intrinsics. */
+    fun intrinsicsFromResult(raw: FloatArray, w: Int, h: Int): FloatArray? =
+        if (raw.size >= 4 && raw[0] > 1f) com.gl1ch5.stabcam.stab.FrameFit.outputIntrinsics(raw, arrW, arrH, w, h) else null
+
+    /** Highest-priority AE modes (API 35): needed for the shutter cap. */
+    val supportsExposurePriority: Boolean = android.os.Build.VERSION.SDK_INT >= 35 &&
+        (chars.get(CameraCharacteristics.CONTROL_AE_AVAILABLE_PRIORITY_MODES)?.contains(CameraMetadata.CONTROL_AE_PRIORITY_MODE_SENSOR_EXPOSURE_TIME_PRIORITY) == true)
+
     /** Rolling-shutter readout time in ns, or null if the HAL does not report it. */
     val readoutNs: Long? = null // reported per frame (CaptureResult.SENSOR_ROLLING_SHUTTER_SKEW)
 
@@ -58,12 +69,7 @@ class CameraCaps(val id: String, val chars: CameraCharacteristics) {
             val pw = chars.get(CameraCharacteristics.SENSOR_INFO_PHYSICAL_SIZE)?.width ?: 6f
             fx = focal / pw * aw; fy = fx; cx = aw / 2; cy = ah / 2
         }
-        var cropW = aw
-        var cropH = aw * h / w
-        if (cropH > ah) { cropH = ah; cropW = ah * w / h }
-        val offX = (aw - cropW) / 2; val offY = (ah - cropH) / 2
-        val s = w / cropW
-        return floatArrayOf(fx * s, fy * s, (cx - offX) * s, (cy - offY) * s)
+        return com.gl1ch5.stabcam.stab.FrameFit.outputIntrinsics(floatArrayOf(fx, fy, cx, cy), aw, ah, w, h)
     }
 
     /** 10-bit HLG camera streams (Android 13+). */

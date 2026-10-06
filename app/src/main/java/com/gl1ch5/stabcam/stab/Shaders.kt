@@ -96,16 +96,18 @@ object Shaders {
                 if (uPreview > 0 || uBicubic == 0) { o = vec4(outc(grade(fetch(q))), 1.0); return; }
                 vec3 c = catmull(q);
                 if (uSharp > 0.0) {
+                    // Contrast Adaptive Sharpening, after AMD FidelityFX CAS (MIT): per-channel, strength shrinks near clipping, no halos.
                     vec2 px = 1.0 / uSize;
-                    vec3 n = fetch(q + vec2(0.0, -px.y));
-                    vec3 s2 = fetch(q + vec2(0.0, px.y));
-                    vec3 e = fetch(q + vec2(px.x, 0.0));
-                    vec3 w = fetch(q + vec2(-px.x, 0.0));
-                    vec3 lo = min(min(n, s2), min(e, w));
-                    vec3 hi = max(max(n, s2), max(e, w));
-                    vec3 sh = c + uSharp * (c - 0.25 * (n + s2 + e + w));
-                    // Limited overshoot: no halos around edges.
-                    c = clamp(sh, min(lo, c) - 0.02, max(hi, c) + 0.02);
+                    vec3 b = fetch(q + vec2(0.0, -px.y));
+                    vec3 d = fetch(q + vec2(-px.x, 0.0));
+                    vec3 f = fetch(q + vec2(px.x, 0.0));
+                    vec3 h = fetch(q + vec2(0.0, px.y));
+                    vec3 mn = min(min(min(d, c), min(f, b)), h);
+                    vec3 mx = max(max(max(d, c), max(f, b)), h);
+                    vec3 amp = sqrt(clamp(min(mn, 1.0 - mx) / max(mx, vec3(1e-4)), 0.0, 1.0));
+                    float peak = -1.0 / mix(8.0, 5.0, clamp(uSharp, 0.0, 1.0));
+                    vec3 wgt = amp * peak;
+                    c = clamp((c + (b + d + f + h) * wgt) / (1.0 + 4.0 * wgt), 0.0, 1.0);
                 }
                 o = vec4(outc(grade(c)), 1.0);
             }"""

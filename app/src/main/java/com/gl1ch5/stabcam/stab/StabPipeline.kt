@@ -41,6 +41,8 @@ class StabPipeline(
     timeOffsetMs: Double = 0.0,
     /** 10-bit HLG output (RGB10_A2 surfaces); falls back to 8-bit if EGL cannot do it. */
     hdr: Boolean = false,
+    /** Scale the denoise tolerance with ISO (more gain = more noise). */
+    private val denoiseAuto: Boolean = true,
 ) {
     private val offsetNs = (timeOffsetMs * 1e6).toLong()
     private val wantHdr = hdr
@@ -87,10 +89,17 @@ class StabPipeline(
     private val stm = FloatArray(16)
 
     @Volatile var enabled = true
+    private val kBase = k.copyOf()
+    @Volatile private var kCur = k.copyOf()
+    @Volatile private var iso = 200
+    @Volatile private var degraded = false
+    /** Called (on the GL thread) when thermal throttling switches the heavy extras off/on. */
+    @Volatile var onDegraded: ((Boolean) -> Unit)? = null
     /** POST mode: frames pass through untouched (no warp/denoise/sharpen/LUT); the frame timestamps are logged. */
     @Volatile var rawMode = false
     private var frameTs = LongArray(4096)
     private var frameExp = LongArray(4096)
+    private var frameIso = IntArray(4096)
     private var frameN = 0
     @Volatile var lastBaseTs = -1L
         private set
@@ -106,6 +115,7 @@ class StabPipeline(
     private class Calib(val cb: (AxisCalibrator.Result?, String) -> Unit) {
         var prev: ByteArray? = null; var prevTs = 0L; var frames = 0
         val flows = ArrayList<DoubleArray>(); val disp = ArrayList<DoubleArray>()
+        val lagDisp = ArrayList<Array<DoubleArray>>() // displacement for gyro windows shifted by -10..+10 ms
     }
     private var calib: Calib? = null
     private var grayProg = 0
@@ -145,12 +155,32 @@ class StabPipeline(
     /** Shake the phone for ~4 s: matches image motion against the gyro and reports the best axis mapping. */
     fun calibrateAxes(cb: (AxisCalibrator.Result?, String) -> Unit) { handler.post { calib = Calib(cb) } }
 
+    fun setIso(v: Int) { if (v > 0) iso = v }
+
+    /** Per-frame intrinsics from the HAL (focus breathing etc.); implausible values are ignored, the rest is smoothed. */
+    fun setIntrinsics(n: FloatArray) {
+        if (n.size < 4) return
+        for (i in 0..1) if (Math.abs(n[i] - kBase[i]) / kBase[i] > 0.12f) return
+        if (Math.abs(n[2] - kBase[2]) > width * 0.05f || Math.abs(n[3] - kBase[3]) > height * 0.05f) return
+        val c = kCur
+        kCur = FloatArray(4) { c[it] * 0.6f + n[it] * 0.4f }
+        updateIntr()
+    }
+
+    private fun updateIntr() {
+        val z = zoom.toDouble(); val c = kCur
+        stabilizer.intr = FrameFit.Intr(c[0].toDouble(), c[1].toDouble(), c[2].toDouble(), c[3].toDouble(), width.toDouble(), height.toDouble()).scaled(z)
+    }
+
+    private fun sigmaEff(): Float =
+        if (!denoiseAuto) denoiseSigma else (denoiseSigma * Math.sqrt(iso.coerceIn(50, 3200) / 200.0)).toFloat().coerceIn(0.012f, 0.12f)
+
     fun setExposure(ns: Long) { if (ns > 0) exposureNs = ns }
     fun setReadout(ns: Long) { if (ns > 0) readoutNs = ns }
     fun setZoom(z: Float) {
         if (z != zoom) hasHist = false
         zoom = z
-        stabilizer.intr = FrameFit.Intr(k[0].toDouble(), k[1].toDouble(), k[2].toDouble(), k[3].toDouble(), width.toDouble(), height.toDouble()).scaled(z.toDouble())
+        updateIntr()
         // Intrinsics are known for the main camera only: no warping on the ultrawide range.
         enabled = z >= 0.95f
     }
@@ -261,7 +291,8 @@ class StabPipeline(
     }
 
     /** Frame timestamps (ns, camera clock) and exposure times of the last recording, valid after [stopRecording]. */
-    fun frameLog(): Triple<LongArray, LongArray, Int> = Triple(frameTs, frameExp, frameN)
+    class FrameLog(val ts: LongArray, val exp: LongArray, val iso: IntArray, val n: Int)
+    fun frameLog() = FrameLog(frameTs, frameExp, frameIso, frameN)
 
     /** Stops feeding the encoder and finalises the file. Blocks. */
     fun stopRecording(): Boolean {
@@ -324,7 +355,7 @@ class StabPipeline(
 
         // Temporal denoise in the sensor frame (history reprojected by the gyro rotation between frames).
         var useDn = false
-        if (denoise > 0f && !rawMode) {
+        if (denoise > 0f && !rawMode && !degraded) {
             val qNow = gyro.orientationAt(ts + offsetNs + exposure / 2 + readout / 2)
             useDn = runDenoise(qNow)
             prevQ = qNow
@@ -340,8 +371,8 @@ class StabPipeline(
             egl.makeCurrent(es)
             r.onFrame(ts)
             if (rawMode) {
-                if (frameN == frameTs.size) { frameTs = frameTs.copyOf(frameN * 2); frameExp = frameExp.copyOf(frameN * 2) }
-                frameTs[frameN] = ts; frameExp[frameN] = exposure; frameN++
+                if (frameN == frameTs.size) { frameTs = frameTs.copyOf(frameN * 2); frameExp = frameExp.copyOf(frameN * 2); frameIso = frameIso.copyOf(frameN * 2) }
+                frameTs[frameN] = ts; frameExp[frameN] = exposure; frameIso[frameN] = iso; frameN++
             }
             draw(width, height, false, useDn)
             egl.setPresentationTime(es, r.relative(ts))
@@ -365,6 +396,9 @@ class StabPipeline(
             if (statWn > 0) Logger.i(TAG, "Угловая скорость rms (°/с, оси устройства): x=%.1f y=%.1f z=%.1f".format(
                 Math.toDegrees(Math.sqrt(statW[0] / statWn)), Math.toDegrees(Math.sqrt(statW[1] / statWn)), Math.toDegrees(Math.sqrt(statW[2] / statWn))))
             statW.fill(0.0); statWn = 0
+            val th = thermal()
+            if (!degraded && th >= 3) { degraded = true; hasHist = false; Logger.w(TAG, "Нагрев (статус $th): отключаю шумоподавление и бикубику"); onDegraded?.invoke(true) }
+            else if (degraded && th in 0..1) { degraded = false; Logger.i(TAG, "Нагрев спал: возвращаю шумоподавление и бикубику"); onDegraded?.invoke(false) }
             statDrops = 0; statMaxDt = 0; statDtSum = 0; statDtN = 0
         }
     }
@@ -383,7 +417,7 @@ class StabPipeline(
         GLES20.glUniform1i(locDn["uHist"]!!, 1)
         GLES20.glUniform2f(locDn["uSize"]!!, width.toFloat(), height.toFloat())
         val z = zoom
-        GLES20.glUniform4f(locDn["uK"]!!, k[0] * z, k[1] * z, width / 2f + (k[2] - width / 2f) * z, height / 2f + (k[3] - height / 2f) * z)
+        GLES20.glUniform4f(locDn["uK"]!!, kCur[0] * z, kCur[1] * z, width / 2f + (kCur[2] - width / 2f) * z, height / 2f + (kCur[3] - height / 2f) * z)
         val pq = prevQ
         val have = hasHist && pq != null
         if (have) {
@@ -392,7 +426,7 @@ class StabPipeline(
         } else for (i in 0 until 9) relRows[i] = if (i % 4 == 0) 1f else 0f
         GLES30.glUniformMatrix3fv(locDn["uRel"]!!, 1, false, relRows, 0)
         GLES20.glUniform1f(locDn["uStr"]!!, denoise)
-        GLES20.glUniform1f(locDn["uSigma"]!!, denoiseSigma)
+        GLES20.glUniform1f(locDn["uSigma"]!!, sigmaEff())
         GLES20.glUniform1f(locDn["uSp"]!!, minOf(0.8f, denoise * 0.7f))
         GLES20.glUniform1i(locDn["uHasHist"]!!, if (have) 1 else 0)
         GLES20.glEnableVertexAttribArray(0)
@@ -436,6 +470,7 @@ class StabPipeline(
                 // GL rows run bottom-up: flip the vertical flow into top-down sensor coordinates
                 c.flows += doubleArrayOf(s[0] * width / cw, -s[1] * height / ch)
                 c.disp += d
+                c.lagDisp += Array(21) { li -> gyro.integrateRaw(c.prevTs + (li - 10) * 1_000_000L, ts + (li - 10) * 1_000_000L) }
             }
         }
         c.prev = cur; c.prevTs = ts
@@ -444,7 +479,12 @@ class StabPipeline(
             if (c.flows.size < 25) c.cb(null, "Мало движения или нет деталей в кадре (${c.flows.size} измерений). Потрясите сильнее и наведите на сцену с текстурой.")
             else {
                 val z = zoom
-                val r = AxisCalibrator.solve(c.flows, c.disp, k[0] * z.toDouble(), k[1] * z.toDouble(), listOf("-y", "-x", "-z"))
+                val r = AxisCalibrator.solve(c.flows, c.disp, kCur[0] * z.toDouble(), kCur[1] * z.toDouble(), listOf("-y", "-x", "-z"))
+                val byLag = (0 until 21).map { li -> c.lagDisp.map { it[li] } }
+                val ls = AxisCalibrator.lagScores(c.flows, byLag, r.best.axes, kCur[0] * z.toDouble(), kCur[1] * z.toDouble())
+                val bi = ls.indices.maxByOrNull { ls[it] } ?: 10
+                r.lagMs = bi - 10; r.lagGain = ls[bi] - ls[10]
+                Logger.i(TAG, "Калибровка времени: лучший сдвиг гироскопа ${r.lagMs} мс (совпадение ${"%.2f".format(ls[bi])}, при 0 мс ${"%.2f".format(ls[10])})")
                 Logger.i(TAG, "Калибровка осей: лучший ${r.best.axes} (${"%.2f".format(r.best.score)}), второй ${r.second.axes} (${"%.2f".format(r.second.score)}), измерений ${c.flows.size}")
                 c.cb(r, "")
             }
@@ -462,9 +502,9 @@ class StabPipeline(
         GLES20.glUniform2f(l["uSize"]!!, width.toFloat(), height.toFloat())
         val z = zoom
         // Zoom about the image centre: focal lengths scale, principal point moves with it.
-        val cx = width / 2f + (k[2] - width / 2f) * z
-        val cy = height / 2f + (k[3] - height / 2f) * z
-        GLES20.glUniform4f(l["uK"]!!, k[0] * z, k[1] * z, cx, cy)
+        val cx = width / 2f + (kCur[2] - width / 2f) * z
+        val cy = height / 2f + (kCur[3] - height / 2f) * z
+        GLES20.glUniform4f(l["uK"]!!, kCur[0] * z, kCur[1] * z, cx, cy)
         GLES20.glUniform1f(l["uZoom"]!!, if (enabled && !rawMode) stabilizer.crop.toFloat() else 1f)
         GLES20.glUniform1i(l["uPreview"]!!, if (preview) previewRot else 0)
         GLES20.glUniform1i(l["uHdr"]!!, if (is10bit) 1 else 0)
@@ -475,7 +515,7 @@ class StabPipeline(
         GLES20.glUniform1f(l["uLutN"]!!, lutSize)
         GLES20.glActiveTexture(GLES20.GL_TEXTURE0)
         GLES20.glUniform1f(l["uSharp"]!!, if (rawMode) 0f else sharpen)
-        GLES20.glUniform1i(l["uBicubic"]!!, if (bicubic && !rawMode) 1 else 0)
+        GLES20.glUniform1i(l["uBicubic"]!!, if (bicubic && !rawMode && !degraded) 1 else 0)
         GLES30.glUniformMatrix3fv(l["uR"]!!, Stabilizer.ROWS, false, rows, 0)
         GLES20.glEnableVertexAttribArray(0)
         GLES20.glVertexAttribPointer(0, 2, GLES20.GL_FLOAT, false, 0, quad)

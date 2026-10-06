@@ -402,11 +402,14 @@ class MainActivity : Activity(), VideoCamera.Listener {
                 if (r == null) { showDiag(err, 9000); return@runOnUiThread }
                 val pct = (r.best.score * 100).toInt()
                 val curOk = r.current != null && r.current.axes == r.best.axes
+                val applyLag = r.confident && Math.abs(r.lagMs) >= 1 && r.lagGain > 0.02
+                if (applyLag) { repo.set("stab.timeOffsetMs", r.lagMs.toDouble()); cfg = repo.load() }
+                val lagNote = if (applyLag) " Сдвиг гироскопа ${r.lagMs} мс применён." else ""
                 if (!r.confident) showDiag("Не удалось уверенно определить оси (лучший вариант ${r.best.axes.joinToString(",")} — $pct%). Потрясите сильнее.", 10000)
-                else if (curOk) showDiag("Оси гироскопа верные: ${r.best.axes.joinToString(",")} (совпадение $pct%)", 8000)
+                else if (curOk) { showDiag("Оси гироскопа верные: ${r.best.axes.joinToString(",")} (совпадение $pct%).$lagNote", 9000); if (applyLag) main.postDelayed({ openCamera() }, 600) }
                 else {
                     repo.set("stab.gyroAxes", JSONArray(r.best.axes)); cfg = repo.load()
-                    showDiag("Оси изменены на ${r.best.axes.joinToString(",")} (совпадение $pct%). Перезапускаю камеру…", 6000)
+                    showDiag("Оси изменены на ${r.best.axes.joinToString(",")} (совпадение $pct%).$lagNote Перезапускаю камеру…", 6000)
                     main.postDelayed({ openCamera() }, 600)
                 }
             }
@@ -425,6 +428,10 @@ class MainActivity : Activity(), VideoCamera.Listener {
             probed = true
             runProbe()
         }
+    }
+
+    override fun onThermalDegraded(on: Boolean) = runOnUiThread {
+        showDiag(if (on) "Телефон нагрелся: шумоподавление и бикубика временно отключены" else "Нагрев спал: качество восстановлено", 5000)
     }
 
     override fun onQualityUnsupported() = runOnUiThread {

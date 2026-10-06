@@ -41,11 +41,13 @@ class PostMeta(j: JSONObject) {
     val gyroAxes: List<String> = j.optJSONArray("gyroAxes")?.let { a -> (0 until a.length()).map { a.getString(it) } } ?: emptyList()
     val frameRel: LongArray
     val frameExp: LongArray
+    val frameIso: IntArray
 
     init {
         val f = j.getJSONArray("frames")
         frameRel = LongArray(f.length()) { f.getJSONArray(it).getLong(0) }
         frameExp = LongArray(f.length()) { f.getJSONArray(it).getLong(1) }
+        frameIso = IntArray(f.length()) { f.getJSONArray(it).optInt(2, 0) }
     }
 }
 
@@ -67,6 +69,7 @@ class OfflineProcessor(
         val maxCrop: Double = 1.16,
         val denoise: Float = 0.5f,
         val denoiseSigma: Float = 0.04f,
+        val denoiseAuto: Boolean = true,
         val sharpen: Float = 0.35f,
         val bicubic: Boolean = true,
         val lut: Lut? = null,
@@ -299,7 +302,7 @@ class OfflineProcessor(
         var dn = false
         if (o.denoise > 0f) {
             if (idx != lastIdx + 1) hasHist = false
-            dn = denoisePass(idx, real)
+            dn = denoisePass(idx, real, meta.frameIso[idx])
             lastIdx = idx
         }
         draw(dn, plan.crop[idx].toFloat())
@@ -309,7 +312,7 @@ class OfflineProcessor(
 
     private lateinit var path0: OrientationPath
 
-    private fun denoisePass(idx: Int, real: Array<Quat>): Boolean {
+    private fun denoisePass(idx: Int, real: Array<Quat>, iso: Int): Boolean {
         val cur = 1 - histIdx
         GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, fbo[cur])
         GLES20.glViewport(0, 0, w, h)
@@ -325,7 +328,7 @@ class OfflineProcessor(
         } else for (i in 0 until 9) rel[i] = if (i % 4 == 0) 1f else 0f
         GLES30.glUniformMatrix3fv(locDn["uRel"]!!, 1, false, rel, 0)
         GLES20.glUniform1f(locDn["uStr"]!!, o.denoise)
-        GLES20.glUniform1f(locDn["uSigma"]!!, o.denoiseSigma)
+        GLES20.glUniform1f(locDn["uSigma"]!!, if (o.denoiseAuto && iso > 0) (o.denoiseSigma * Math.sqrt(iso.coerceIn(50, 3200) / 200.0)).toFloat().coerceIn(0.012f, 0.12f) else o.denoiseSigma)
         GLES20.glUniform1f(locDn["uSp"]!!, minOf(0.8f, o.denoise * 0.7f))
         GLES20.glUniform1i(locDn["uHasHist"]!!, if (hasHist && idx > 0) 1 else 0)
         GLES20.glEnableVertexAttribArray(0)

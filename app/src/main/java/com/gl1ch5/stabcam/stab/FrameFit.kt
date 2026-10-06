@@ -10,6 +10,19 @@ object FrameFit {
         fun scaled(z: Double) = Intr(fx * z, fy * z, w / 2 + (cx - w / 2) * z, h / 2 + (cy - h / 2) * z, w, h)
     }
 
+    /**
+     * Intrinsics [fx, fy, cx, cy] in pixels of an output frame [outW]x[outH] that is a centre crop (to its aspect) of the
+     * [arrW]x[arrH] active array, from a raw Camera2 calibration [cal] = (fx, fy, cx, cy, s) in array pixels.
+     */
+    fun outputIntrinsics(cal: FloatArray, arrW: Float, arrH: Float, outW: Int, outH: Int): FloatArray {
+        var cropW = arrW
+        var cropH = arrW * outH / outW
+        if (cropH > arrH) { cropH = arrH; cropW = arrH * outW / outH }
+        val offX = (arrW - cropW) / 2; val offY = (arrH - cropH) / 2
+        val s = outW / cropW
+        return floatArrayOf(cal[0] * s, cal[1] * s, (cal[2] - offX) * s, (cal[3] - offY) * s)
+    }
+
     /** [r] is a row-major 3x3 rotation mapping output-camera rays to source-camera rays, [z] the zoom-in factor. */
     fun fits(r: DoubleArray, z: Double, k: Intr, inset: Double = 0.015): Boolean {
         val xs = doubleArrayOf(0.0, k.w, 0.0, k.w, k.w / 2, k.w / 2, 0.0, k.w)

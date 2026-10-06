@@ -26,7 +26,8 @@
     "edge": "fast",
     "distortionCorrection": "fast",
     "forceAllQualities": false,
-    "vendorTags": []
+    "vendorTags": [],
+    "shutterCapMs": 0
   },
   "ui": {
     "showInfo": false,
@@ -62,11 +63,13 @@
     "timeOffsetMs": 0,
     "minCrop": 1.03,
     "horizonDeg": 0,
-    "oisPolicy": "keep"
+    "oisPolicy": "keep",
+    "denoiseAuto": true
   },
   "post": {
     "enabled": false,
     "bitrateFactor": 1.5,
-    "exportGcsv": true
+    "exportGcsv": true,
+    "cameraNr": "minimal"
   }
 }

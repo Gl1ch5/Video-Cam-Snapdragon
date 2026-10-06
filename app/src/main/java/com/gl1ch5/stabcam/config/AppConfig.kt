@@ -62,6 +62,9 @@ class AppConfig(val json: JSONObject) {
     val stabMinCrop: Float = stab.optDouble("minCrop", 1.03).toFloat()
     val stabHorizonDeg: Double = stab.optDouble("horizonDeg", 0.0)
     val stabOisOff: Boolean = stab.optString("oisPolicy", "keep") == "off"
+    val stabDenoiseAuto: Boolean = stab.optBoolean("denoiseAuto", true)
+    val shutterCapMs: Double = camera.optDouble("shutterCapMs", 0.0)
+    val postCameraNr: String = json.optJSONObject("post")?.optString("cameraNr", "minimal") ?: "minimal"
     val stabSharpen: Float = stab.optDouble("sharpen", 0.35).toFloat()
     val stabPreviewRot: Int = stab.optInt("previewRot", 1).coerceIn(1, 4)
     val stabDenoise: Float = stab.optDouble("denoise", 0.5).toFloat()

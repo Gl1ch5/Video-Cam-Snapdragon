@@ -54,7 +54,7 @@ object PostJobs {
         val base = metaFile.name.removeSuffix(".meta.json")
         return OfflineProcessor.Options(
             sigmaSec = sigma, maxAngleDeg = cfg.stabMaxAngle + 2, minCrop = cfg.stabMinCrop.toDouble(), maxCrop = (cfg.stabCrop + 0.10).toDouble(),
-            denoise = if (cfg.stabDenoise > 0f) minOf(1f, cfg.stabDenoise + 0.15f) else 0f, denoiseSigma = cfg.stabDenoiseSigma,
+            denoise = if (cfg.stabDenoise > 0f) minOf(1f, cfg.stabDenoise + 0.15f) else 0f, denoiseSigma = cfg.stabDenoiseSigma, denoiseAuto = cfg.stabDenoiseAuto,
             sharpen = cfg.stabSharpen, bicubic = cfg.stabBicubic,
             lut = Luts.resolve(ctx, cfg.lutId), lutStrength = cfg.lutStrength,
             bitrate = if (q != null) cfg.bitrateFor(q) else 50_000_000, hevc = cfg.codec.equals("hevc", true),

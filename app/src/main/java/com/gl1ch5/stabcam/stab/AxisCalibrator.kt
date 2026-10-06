@@ -13,6 +13,9 @@ import kotlin.math.sqrt
 object AxisCalibrator {
     class Candidate(val axes: List<String>, val score: Double)
     class Result(val best: Candidate, val second: Candidate, val current: Candidate?) {
+        /** Best gyro↔frame time offset in ms and how much it improves the match over 0 ms (set by the caller). */
+        var lagMs = 0
+        var lagGain = 0.0
         val confident get() = best.score >= 0.45 && best.score - second.score >= 0.15
     }
 
@@ -40,6 +43,18 @@ object AxisCalibrator {
         all.sortByDescending { it.score }
         val cur = all.firstOrNull { it.axes == current }
         return Result(all[0], all[1], cur)
+    }
+
+    /** Index into [dispByLag] (one displacement series per candidate lag) that best explains [flows] with the given axis spec. */
+    fun bestLag(flows: List<DoubleArray>, dispByLag: List<List<DoubleArray>>, axes: List<String>, fx: Double, fy: Double): Int {
+        val sc = lagScores(flows, dispByLag, axes, fx, fy)
+        return sc.indices.maxByOrNull { sc[it] } ?: 0
+    }
+
+    fun lagScores(flows: List<DoubleArray>, dispByLag: List<List<DoubleArray>>, axes: List<String>, fx: Double, fy: Double): DoubleArray {
+        val p = IntArray(3) { "xyz".indexOf(axes[it].last()).coerceAtLeast(0) }
+        val s = IntArray(3) { if (axes[it].startsWith("-")) -1 else 1 }
+        return DoubleArray(dispByLag.size) { score(flows, dispByLag[it], fx, fy, p, s) }
     }
 
     private fun score(flows: List<DoubleArray>, disp: List<DoubleArray>, fx: Double, fy: Double, p: IntArray, s: IntArray): Double {

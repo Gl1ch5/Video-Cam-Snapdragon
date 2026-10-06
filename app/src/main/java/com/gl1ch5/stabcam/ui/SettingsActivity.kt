@@ -511,6 +511,11 @@ class SettingsActivity : Activity() {
         action("Оси гироскопа", cur.joinToString(", ") + if (idx >= 0) "  (${idx + 1}/${GyroTracker.CANDIDATES.size})" else "", "Следующий") {
             repo.set("stab.gyroAxes", JSONArray(GyroTracker.CANDIDATES[(idx + 1) % GyroTracker.CANDIDATES.size])); show(tab)
         }
+        choice("Выдержка (эксперимент., Android 15+)", listOf("Авто", "1/240", "1/120", "1/60"), listOf(0.0, 4.17, 8.33, 16.7).indexOfFirst { Math.abs(it - num(e, "camera.shutterCapMs", 0.0)) < 0.2 }.coerceAtLeast(0)) { repo.set("camera.shutterCapMs", listOf(0.0, 4.17, 8.33, 16.7)[it]) }
+        note("Короткая выдержка уменьшает смаз при движении (ISO вырастет, шум уберёт шумоподавление). Если камера не поддерживает, в логе будет сообщение.")
+        toggle("Шумоподавление по ISO", "Допуск шума растёт с усилением сенсора: на тёмных сценах чистка сильнее.", bool(e, "stab.denoiseAuto", true)) { repo.set("stab.denoiseAuto", it) }
+        choice("Камера в режиме ПОСТ: шумодав", listOf("Выкл", "Минимум", "Быстрое"), listOf("off", "minimal", "fast").indexOf(str(e, "post.cameraNr")).let { if (it < 0) 1 else it }) { repo.set("post.cameraNr", listOf("off", "minimal", "fast")[it]) }
+        note("В режиме ПОСТ лучше «Минимум»: камера не стирает детали, а обработка после съёмки чистит шум сильнее. Если обработку не запускать, ролик будет зернистее.")
         action("Автокалибровка осей гироскопа", "Потрясти телефон 4 секунды; приложение подберёт оси по движению картинки", "Запустить") {
             getSharedPreferences("calib", MODE_PRIVATE).edit().putBoolean("pending", true).apply()
             toast("Вернитесь на экран камеры: калибровка начнётся сама (нужен STAB)")

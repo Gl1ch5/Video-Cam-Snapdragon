@@ -108,7 +108,7 @@ class Stabilizer(private val p: Params) {
     }
 
     companion object {
-        const val ROWS = 8
+        const val ROWS = 16
 
         /**
          * Per-row source rotations (column-major mat3 each, [ROWS] of them) for the GL shader:
