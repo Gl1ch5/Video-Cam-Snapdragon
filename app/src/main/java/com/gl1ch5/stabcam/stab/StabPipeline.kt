@@ -53,6 +53,8 @@ class StabPipeline(
     private val stm = FloatArray(16)
 
     @Volatile var enabled = true
+    /** Preview orientation variant 1..4 (see shader); encoder output is unaffected. */
+    @Volatile var previewRot = 1
     @Volatile private var zoom = 1f
     @Volatile private var exposureNs = 8_000_000L
     @Volatile private var readoutNs = readoutDefaultNs
@@ -223,7 +225,7 @@ class StabPipeline(
         val cy = height / 2f + (k[3] - height / 2f) * z
         GLES20.glUniform4f(loc["uK"]!!, k[0] * z, k[1] * z, cx, cy)
         GLES20.glUniform1f(loc["uZoom"]!!, if (enabled) crop else 1f)
-        GLES20.glUniform1i(loc["uPreview"]!!, if (preview) 1 else 0)
+        GLES20.glUniform1i(loc["uPreview"]!!, if (preview) previewRot else 0)
         GLES20.glUniform1f(loc["uSharp"]!!, sharpen)
         GLES20.glUniform1i(loc["uBicubic"]!!, if (bicubic) 1 else 0)
         GLES30.glUniformMatrix3fv(loc["uR"]!!, Stabilizer.ROWS, false, rows, 0)
@@ -301,7 +303,10 @@ class StabPipeline(
             }
             void main() {
                 // Output pixel in the sensor-oriented frame (preview is rotated 90° CW to portrait).
-                vec2 pos = (uPreview == 1) ? vec2(vPos.y, 1.0 - vPos.x) : vPos;
+                vec2 pos = vPos;
+                if (uPreview == 1) pos = vec2(vPos.y, 1.0 - vPos.x);
+                else if (uPreview == 2) pos = vec2(1.0 - vPos.y, vPos.x);
+                else if (uPreview == 4) pos = vec2(1.0) - vPos;
                 vec3 d = vec3((pos.x * uSize.x - uK.z) / uK.x, (pos.y * uSize.y - uK.w) / uK.y, 1.0);
                 d.xy /= uZoom;
                 float rp = pos.y * float($rowsN - 1);
@@ -312,7 +317,7 @@ class StabPipeline(
                 vec3 s = R * d;
                 vec2 q = vec2(s.x / s.z * uK.x + uK.z, s.y / s.z * uK.y + uK.w) / uSize;
                 if (q.x < 0.0 || q.x > 1.0 || q.y < 0.0 || q.y > 1.0) { o = vec4(0.0, 0.0, 0.0, 1.0); return; }
-                if (uPreview == 1 || uBicubic == 0) { o = vec4(fetch(q), 1.0); return; }
+                if (uPreview > 0 || uBicubic == 0) { o = vec4(fetch(q), 1.0); return; }
                 vec3 c = catmull(q);
                 if (uSharp > 0.0) {
                     vec2 px = 1.0 / uSize;

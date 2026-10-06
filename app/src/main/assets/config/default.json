@@ -50,6 +50,7 @@
     ],
     "velTauMs": 250,
     "sharpen": 0.35,
-    "bicubic": true
+    "bicubic": true,
+    "previewRot": 1
   }
 }

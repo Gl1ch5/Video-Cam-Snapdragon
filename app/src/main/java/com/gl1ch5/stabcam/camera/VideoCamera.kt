@@ -120,6 +120,8 @@ class VideoCamera(private val ctx: Context, private val listener: Listener) {
         thread.quitSafely()
     }
 
+    fun setPreviewRot(n: Int) = handler.post { pipeline?.previewRot = n }
+
     fun updateControls(c: Controls) = handler.post {
         controls = c
         pipeline?.setZoom(c.zoom)
@@ -450,6 +452,7 @@ class VideoCamera(private val ctx: Context, private val listener: Listener) {
                 Stabilizer.Params(cfg.stabMaxAngle, cfg.stabTauMax, cfg.stabTauMin, cfg.stabVelTau), cfg.stabCrop, readout, cfg.stabSharpen, cfg.stabBicubic,
             )
             p.setZoom(controls.zoom)
+            p.previewRot = cfg.stabPreviewRot
             p.setPreview(previewSurface)
             gyro = g
             pipeline = p

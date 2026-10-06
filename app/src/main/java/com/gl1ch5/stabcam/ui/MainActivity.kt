@@ -156,6 +156,15 @@ class MainActivity : Activity(), VideoCamera.Listener {
             toast(if (controls.ois) "Аппаратный OIS: вкл" else "Аппаратный OIS: выкл")
         }
         btnOis.setOnLongClickListener { runProbe(); true }
+        findViewById<View>(R.id.modeLabel).setOnLongClickListener {
+            val next = cfg.stabPreviewRot % 4 + 1
+            repo.set("stab.previewRot", next)
+            cfg = repo.load()
+            camera.setPreviewRot(next)
+            Logger.i("App", "Ориентация превью (STAB): вариант $next/4")
+            toast("Поворот превью: $next/4")
+            true
+        }
         btnStab.setOnClickListener {
             if (camera.isRecording) return@setOnClickListener
             if (caps?.facingBack != true) { toast("Стабилизация по гиро: только основная камера"); return@setOnClickListener }
