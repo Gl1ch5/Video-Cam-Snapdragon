@@ -56,6 +56,8 @@ class AppConfig(val json: JSONObject) {
     val stabVelTau: Double = stab.optDouble("velTauMs", 250.0) / 1000
     val stabSharpen: Float = stab.optDouble("sharpen", 0.35).toFloat()
     val stabPreviewRot: Int = stab.optInt("previewRot", 1).coerceIn(1, 4)
+    val stabDenoise: Float = stab.optDouble("denoise", 0.5).toFloat()
+    val stabDenoiseSigma: Float = stab.optDouble("denoiseSigma", 0.04).toFloat()
     val stabBicubic: Boolean = stab.optBoolean("bicubic", true)
     val stabReadoutNs: Long = (stab.optDouble("readoutMs", 0.0) * 1e6).toLong()
     val gyroAxes: List<String> = buildList {

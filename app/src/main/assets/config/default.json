@@ -51,6 +51,8 @@
     "velTauMs": 250,
     "sharpen": 0.35,
     "bicubic": true,
-    "previewRot": 1
+    "previewRot": 1,
+    "denoise": 0.5,
+    "denoiseSigma": 0.04
   }
 }

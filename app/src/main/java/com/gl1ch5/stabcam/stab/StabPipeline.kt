@@ -30,6 +30,9 @@ class StabPipeline(
     /** Output sharpening 0..1 (limited unsharp mask) and bicubic (Catmull-Rom) resampling. */
     private val sharpen: Float = 0.35f,
     private val bicubic: Boolean = true,
+    /** Temporal denoise strength 0..1 (0 = off) and noise tolerance (luma difference treated as noise). */
+    private val denoise: Float = 0.5f,
+    private val denoiseSigma: Float = 0.04f,
 ) {
     private val thread = HandlerThread("stab-gl", android.os.Process.THREAD_PRIORITY_DISPLAY).also { it.start() }
     private val handler = Handler(thread.looper)
@@ -38,8 +41,18 @@ class StabPipeline(
     lateinit var cameraSurface: Surface
         private set
     private var tex = 0
-    private var program = 0
+    private var program = 0 // warp reading the camera (external) texture
+    private var program2d = 0 // warp reading the denoised 2D texture
+    private var dnProgram = 0
     private val loc = HashMap<String, Int>()
+    private val loc2d = HashMap<String, Int>()
+    private val locDn = HashMap<String, Int>()
+    private val fbo = IntArray(2)
+    private val fboTex = IntArray(2)
+    private var histIdx = 0
+    private var hasHist = false
+    private var prevQ: Quat? = null
+    private val relRows = FloatArray(9)
     private val quad = ByteBuffer.allocateDirect(8 * 4).order(ByteOrder.nativeOrder()).asFloatBuffer().apply {
         put(floatArrayOf(-1f, -1f, 1f, -1f, -1f, 1f, 1f, 1f)); position(0)
     }
@@ -82,6 +95,7 @@ class StabPipeline(
     fun setExposure(ns: Long) { if (ns > 0) exposureNs = ns }
     fun setReadout(ns: Long) { if (ns > 0) readoutNs = ns }
     fun setZoom(z: Float) {
+        if (z != zoom) hasHist = false
         zoom = z
         // Intrinsics are known for the main camera only: no warping on the ultrawide range.
         enabled = z >= 0.95f
@@ -103,8 +117,32 @@ class StabPipeline(
         st.setDefaultBufferSize(width, height)
         st.setOnFrameAvailableListener({ if (!released) handler.post { drawFrame() } }, handler)
         cameraSurface = Surface(st)
-        program = buildProgram()
-        for (n in listOf("uTex", "uST", "uSize", "uK", "uZoom", "uCrop", "uPreview", "uSharp", "uBicubic", "uR")) loc[n] = GLES20.glGetUniformLocation(program, n)
+        program = buildProgram(external = true)
+        val names = listOf("uTex", "uSize", "uK", "uZoom", "uPreview", "uSharp", "uBicubic", "uR")
+        for (n in names) loc[n] = GLES20.glGetUniformLocation(program, n)
+        if (denoise > 0f) {
+            program2d = buildProgram(external = false)
+            for (n in names) loc2d[n] = GLES20.glGetUniformLocation(program2d, n)
+            dnProgram = buildDenoiseProgram()
+            for (n in listOf("uCur", "uHist", "uSize", "uK", "uRel", "uStr", "uSigma", "uHasHist")) locDn[n] = GLES20.glGetUniformLocation(dnProgram, n)
+            val tex2 = IntArray(2)
+            GLES20.glGenTextures(2, tex2, 0)
+            GLES30.glGenFramebuffers(2, fbo, 0)
+            for (i in 0..1) {
+                fboTex[i] = tex2[i]
+                GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, fboTex[i])
+                GLES30.glTexImage2D(GLES20.GL_TEXTURE_2D, 0, GLES30.GL_RGBA8, width, height, 0, GLES20.GL_RGBA, GLES20.GL_UNSIGNED_BYTE, null)
+                GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MIN_FILTER, GLES20.GL_LINEAR)
+                GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MAG_FILTER, GLES20.GL_LINEAR)
+                GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_WRAP_S, GLES20.GL_CLAMP_TO_EDGE)
+                GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_WRAP_T, GLES20.GL_CLAMP_TO_EDGE)
+                GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, fbo[i])
+                GLES30.glFramebufferTexture2D(GLES30.GL_FRAMEBUFFER, GLES30.GL_COLOR_ATTACHMENT0, GLES20.GL_TEXTURE_2D, fboTex[i], 0)
+                check(GLES30.glCheckFramebufferStatus(GLES30.GL_FRAMEBUFFER) == GLES30.GL_FRAMEBUFFER_COMPLETE) { "FBO incomplete" }
+            }
+            GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, 0)
+            Logger.i(TAG, "Шумоподавление по времени: сила $denoise, допуск шума $denoiseSigma")
+        }
         Logger.i(TAG, "GL готов: ${GLES20.glGetString(GLES20.GL_RENDERER)}, ${GLES20.glGetString(GLES20.GL_VERSION)}, буфер ${width}x$height")
     }
 
@@ -181,9 +219,16 @@ class StabPipeline(
             stabilizer.reset()
         }
 
+        // Temporal denoise in the sensor frame (history reprojected by the gyro rotation between frames).
+        var useDn = false
+        if (denoise > 0f) {
+            val qNow = gyro.orientationAt(ts + exposure / 2 + readout / 2)
+            useDn = runDenoise(qNow)
+            prevQ = qNow
+        }
         previewSurf?.let { s ->
             egl.makeCurrent(s)
-            draw(previewSize.first, previewSize.second, true)
+            draw(previewSize.first, previewSize.second, true, useDn)
             egl.swap(s)
         }
         val r = rec
@@ -191,7 +236,7 @@ class StabPipeline(
         if (r != null && es != null) {
             egl.makeCurrent(es)
             r.onFrame(ts)
-            draw(width, height, false)
+            draw(width, height, false, useDn)
             egl.setPresentationTime(es, r.relative(ts))
             egl.swap(es)
         }
@@ -211,24 +256,59 @@ class StabPipeline(
         }
     }
 
-    private fun draw(w: Int, h: Int, preview: Boolean) {
-        GLES20.glViewport(0, 0, w, h)
-        GLES20.glUseProgram(program)
+    /** Renders the denoised current frame into the history FBO; returns false if it was skipped. */
+    private fun runDenoise(qNow: Quat): Boolean {
+        val cur = 1 - histIdx
+        GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, fbo[cur])
+        GLES20.glViewport(0, 0, width, height)
+        GLES20.glUseProgram(dnProgram)
         GLES20.glActiveTexture(GLES20.GL_TEXTURE0)
         GLES20.glBindTexture(GL_TEXTURE_EXTERNAL_OES, tex)
-        GLES20.glUniform1i(loc["uTex"]!!, 0)
-        GLES20.glUniformMatrix4fv(loc["uST"]!!, 1, false, stm, 0)
-        GLES20.glUniform2f(loc["uSize"]!!, width.toFloat(), height.toFloat())
+        GLES20.glUniform1i(locDn["uCur"]!!, 0)
+        GLES20.glActiveTexture(GLES20.GL_TEXTURE1)
+        GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, fboTex[histIdx])
+        GLES20.glUniform1i(locDn["uHist"]!!, 1)
+        GLES20.glUniform2f(locDn["uSize"]!!, width.toFloat(), height.toFloat())
+        val z = zoom
+        GLES20.glUniform4f(locDn["uK"]!!, k[0] * z, k[1] * z, width / 2f + (k[2] - width / 2f) * z, height / 2f + (k[3] - height / 2f) * z)
+        val pq = prevQ
+        val have = hasHist && pq != null
+        if (have) {
+            val m = (pq!!.conj() * qNow).toMatrix() // current-frame ray -> previous-frame ray
+            for (r in 0..2) for (c in 0..2) relRows[c * 3 + r] = m[r * 3 + c].toFloat()
+        } else Stabilizer.identityRows(relRows)
+        GLES30.glUniformMatrix3fv(locDn["uRel"]!!, 1, false, relRows, 0)
+        GLES20.glUniform1f(locDn["uStr"]!!, denoise)
+        GLES20.glUniform1f(locDn["uSigma"]!!, denoiseSigma)
+        GLES20.glUniform1i(locDn["uHasHist"]!!, if (have) 1 else 0)
+        GLES20.glEnableVertexAttribArray(0)
+        GLES20.glVertexAttribPointer(0, 2, GLES20.GL_FLOAT, false, 0, quad)
+        GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP, 0, 4)
+        GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, 0)
+        histIdx = cur
+        hasHist = true
+        return true
+    }
+
+    private fun draw(w: Int, h: Int, preview: Boolean, denoised: Boolean) {
+        val prog = if (denoised) program2d else program
+        val l = if (denoised) loc2d else loc
+        GLES20.glViewport(0, 0, w, h)
+        GLES20.glUseProgram(prog)
+        GLES20.glActiveTexture(GLES20.GL_TEXTURE0)
+        if (denoised) GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, fboTex[histIdx]) else GLES20.glBindTexture(GL_TEXTURE_EXTERNAL_OES, tex)
+        GLES20.glUniform1i(l["uTex"]!!, 0)
+        GLES20.glUniform2f(l["uSize"]!!, width.toFloat(), height.toFloat())
         val z = zoom
         // Zoom about the image centre: focal lengths scale, principal point moves with it.
         val cx = width / 2f + (k[2] - width / 2f) * z
         val cy = height / 2f + (k[3] - height / 2f) * z
-        GLES20.glUniform4f(loc["uK"]!!, k[0] * z, k[1] * z, cx, cy)
-        GLES20.glUniform1f(loc["uZoom"]!!, if (enabled) crop else 1f)
-        GLES20.glUniform1i(loc["uPreview"]!!, if (preview) previewRot else 0)
-        GLES20.glUniform1f(loc["uSharp"]!!, sharpen)
-        GLES20.glUniform1i(loc["uBicubic"]!!, if (bicubic) 1 else 0)
-        GLES30.glUniformMatrix3fv(loc["uR"]!!, Stabilizer.ROWS, false, rows, 0)
+        GLES20.glUniform4f(l["uK"]!!, k[0] * z, k[1] * z, cx, cy)
+        GLES20.glUniform1f(l["uZoom"]!!, if (enabled) crop else 1f)
+        GLES20.glUniform1i(l["uPreview"]!!, if (preview) previewRot else 0)
+        GLES20.glUniform1f(l["uSharp"]!!, sharpen)
+        GLES20.glUniform1i(l["uBicubic"]!!, if (bicubic) 1 else 0)
+        GLES30.glUniformMatrix3fv(l["uR"]!!, Stabilizer.ROWS, false, rows, 0)
         GLES20.glEnableVertexAttribArray(0)
         GLES20.glVertexAttribPointer(0, 2, GLES20.GL_FLOAT, false, 0, quad)
         GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP, 0, 4)
@@ -252,7 +332,7 @@ class StabPipeline(
         thread.quitSafely()
     }
 
-    private fun buildProgram(): Int {
+    private fun buildProgram(external: Boolean): Int {
         val vs = """#version 300 es
             layout(location = 0) in vec2 aPos;
             out vec2 vPos;
@@ -262,10 +342,9 @@ class StabPipeline(
             }"""
         val rowsN = Stabilizer.ROWS
         val fs = """#version 300 es
-            #extension GL_OES_EGL_image_external_essl3 : require
+            ${if (external) "#extension GL_OES_EGL_image_external_essl3 : require" else ""}
             precision highp float;
-            uniform samplerExternalOES uTex;
-            uniform mat4 uST;
+            uniform ${if (external) "samplerExternalOES" else "sampler2D"} uTex;
             uniform vec2 uSize;
             uniform vec4 uK;
             uniform float uZoom;
@@ -280,7 +359,7 @@ class StabPipeline(
             vec3 fetch(vec2 q) {
                 // Raw buffer coordinates (top row = 0): the camera service pre-rotates the SurfaceTexture
                 // transform to portrait, but the gyro/intrinsics maths needs the unrotated sensor frame.
-                return texture(uTex, q).rgb;
+                return texture(uTex, ${if (external) "q" else "vec2(q.x, 1.0 - q.y)"}).rgb;
             }
 
             // Catmull-Rom with 9 bilinear taps: keeps edges crisp after the warp (bilinear alone softens them).
@@ -341,6 +420,53 @@ class StabPipeline(
         val ok = IntArray(1)
         GLES20.glGetProgramiv(p, GLES20.GL_LINK_STATUS, ok, 0)
         check(ok[0] == GLES20.GL_TRUE) { "link: " + GLES20.glGetProgramInfoLog(p) }
+        return p
+    }
+
+    private fun buildDenoiseProgram(): Int {
+        val vs = """#version 300 es
+            layout(location = 0) in vec2 aPos;
+            out vec2 vPos;
+            void main() {
+                vPos = vec2((aPos.x + 1.0) * 0.5, (1.0 - aPos.y) * 0.5);
+                gl_Position = vec4(aPos, 0.0, 1.0);
+            }"""
+        val fs = """#version 300 es
+            #extension GL_OES_EGL_image_external_essl3 : require
+            precision highp float;
+            uniform samplerExternalOES uCur;
+            uniform sampler2D uHist;
+            uniform vec2 uSize;
+            uniform vec4 uK;
+            uniform mat3 uRel;
+            uniform float uStr;
+            uniform float uSigma;
+            uniform int uHasHist;
+            in vec2 vPos;
+            out vec4 o;
+            void main() {
+                vec3 c = texture(uCur, vPos).rgb;
+                if (uHasHist == 0) { o = vec4(c, 1.0); return; }
+                vec3 d = vec3((vPos.x * uSize.x - uK.z) / uK.x, (vPos.y * uSize.y - uK.w) / uK.y, 1.0);
+                vec3 s = uRel * d;
+                vec2 q = vec2(s.x / s.z * uK.x + uK.z, s.y / s.z * uK.y + uK.w) / uSize;
+                if (q.x < 0.0 || q.x > 1.0 || q.y < 0.0 || q.y > 1.0) { o = vec4(c, 1.0); return; }
+                vec3 h = texture(uHist, vec2(q.x, 1.0 - q.y)).rgb;
+                float dl = dot(abs(c - h), vec3(0.299, 0.587, 0.114));
+                // Similar -> average (noise); different -> keep the new frame (motion, no ghosts).
+                float w = uStr * 0.75 * exp(-(dl * dl) / (uSigma * uSigma));
+                // Large reprojection shifts blur the history: trust it less.
+                float shift = length((q - vPos) * uSize);
+                w *= 1.0 / (1.0 + shift * 0.08);
+                o = vec4(mix(c, h, w), 1.0);
+            }"""
+        val p = GLES20.glCreateProgram()
+        GLES20.glAttachShader(p, compile(GLES20.GL_VERTEX_SHADER, vs))
+        GLES20.glAttachShader(p, compile(GLES20.GL_FRAGMENT_SHADER, fs))
+        GLES20.glLinkProgram(p)
+        val ok = IntArray(1)
+        GLES20.glGetProgramiv(p, GLES20.GL_LINK_STATUS, ok, 0)
+        check(ok[0] == GLES20.GL_TRUE) { "link dn: " + GLES20.glGetProgramInfoLog(p) }
         return p
     }
 

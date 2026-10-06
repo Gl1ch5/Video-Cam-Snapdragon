@@ -449,7 +449,7 @@ class VideoCamera(private val ctx: Context, private val listener: Listener) {
             Logger.i(TAG, "Стабилизация: K=[${k.joinToString { "%.1f".format(it) }}] readout=${readout / 1000}мкс crop=${cfg.stabCrop} макс=${cfg.stabMaxAngle}°")
             val p = StabPipeline(
                 g, quality.width, quality.height, k,
-                Stabilizer.Params(cfg.stabMaxAngle, cfg.stabTauMax, cfg.stabTauMin, cfg.stabVelTau), cfg.stabCrop, readout, cfg.stabSharpen, cfg.stabBicubic,
+                Stabilizer.Params(cfg.stabMaxAngle, cfg.stabTauMax, cfg.stabTauMin, cfg.stabVelTau), cfg.stabCrop, readout, cfg.stabSharpen, cfg.stabBicubic, cfg.stabDenoise, cfg.stabDenoiseSigma,
             )
             p.setZoom(controls.zoom)
             p.previewRot = cfg.stabPreviewRot
