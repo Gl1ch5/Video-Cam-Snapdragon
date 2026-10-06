@@ -655,6 +655,13 @@ class MainActivity : Activity(), VideoCamera.Listener {
         val items = ArrayList<QuickMenu.Item>()
         items += QuickMenu.Item("Выкл", { mark(cur == -1) }, { setMode(-1) }, closeOnTap = true)
         Presets.strength.forEachIndexed { i, l -> items += QuickMenu.Item(l.label, { mark(cur == i) }, { setMode(i) }, closeOnTap = true) }
+        val defZ = GyroTracker.CANDIDATES[0][2]
+        items += QuickMenu.Item("Знак крена (диагностика)", { if (cfg.gyroAxes.getOrNull(2) == defZ) "обычный" else "ИНВЕРТ" }, {
+            val a = cfg.gyroAxes.toMutableList()
+            a[2] = if (a[2].startsWith("-")) a[2].removePrefix("-") else "-" + a[2]
+            repo.set("stab.gyroAxes", JSONArray(a)); cfg = repo.load(); needReopen = true
+            Logger.i("App", "Оси гиро: ${a.joinToString(",")} (знак крена инвертирован вручную)")
+        }, closeOnTap = true)
         items += QuickMenu.Item("Горизонт", { Presets.horizon[Presets.indexOf(Presets.horizon, repo.effectiveJson())].label }, {
             val n = (Presets.indexOf(Presets.horizon, repo.effectiveJson()) + 1) % Presets.horizon.size
             Presets.apply(repo, Presets.horizon[n]); cfg = repo.load(); needReopen = true
