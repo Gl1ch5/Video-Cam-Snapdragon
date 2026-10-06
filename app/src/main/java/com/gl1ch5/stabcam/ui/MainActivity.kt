@@ -40,6 +40,7 @@ import com.gl1ch5.stabcam.lut.Luts
 import com.gl1ch5.stabcam.config.Presets
 import com.gl1ch5.stabcam.config.QuickProfiles
 import com.gl1ch5.stabcam.module.ModuleManager
+import org.json.JSONObject
 import android.hardware.Sensor
 import android.hardware.SensorManager
 import android.view.GestureDetector
@@ -194,7 +195,7 @@ class MainActivity : Activity(), VideoCamera.Listener {
             toast(when (next) { 0 -> "OIS: вкл"; 1 -> "OIS: авто (выключается при STAB)"; else -> "OIS: выкл" })
             if (cfg.stabOisOff != policyBefore) openCamera() else setControls(controls)
         }
-        btnOis.setOnLongClickListener { runProbe(); true }
+        btnOis.setOnLongClickListener { if (!camera.isRecording) showOisMenu(); true }
         val gd = GestureDetector(this, object : GestureDetector.SimpleOnGestureListener() {
             override fun onDown(e: android.view.MotionEvent) = true
             override fun onSingleTapUp(e: android.view.MotionEvent): Boolean { cycleProfile(1); return true }
@@ -533,7 +534,7 @@ class MainActivity : Activity(), VideoCamera.Listener {
             btnHdr.visibility = if (c.supportsHlg10) View.VISIBLE else View.GONE
         }
         btnStab.visibility = if (hasGyro && c.facingBack) View.VISIBLE else View.GONE
-        setTextFade(btnOis, if (oisMode() == 1) "OIS·A" else "OIS")
+        setTextFade(btnOis, vendorMode()?.let { "OIS·$it" } ?: if (oisMode() == 1) "OIS·A" else "OIS")
         val pname = profiles().firstOrNull { it.id == cfg.profileId }?.name ?: "Авто"
         Fx.slideText(modeLabel, pname.uppercase(), 1)
         setTextFade(btnStab, if (simple) "Стаб" else "STAB")
@@ -646,6 +647,52 @@ class MainActivity : Activity(), VideoCamera.Listener {
             val bmp: Bitmap? = runCatching { contentResolver.loadThumbnail(uri, Size(256, 256), null) }.getOrNull()
             runOnUiThread { bmp?.let { thumb.setImageBitmap(it); Fx.pop(thumb) } }
         }
+    }
+
+    private fun vendorStabKey(): String? = caps?.vendorStabKeys?.firstOrNull()
+
+    /** Current value of the vendor stabilisation key from the config, or null if not set. */
+    private fun vendorMode(): Int? = vendorStabKey()?.let { k -> cfg.vendorTags.firstOrNull { it.name == k }?.value?.let { (it as? Number)?.toInt() } }
+
+    /** Sets (or clears, when [v] is null) the vendor stabilisation tag in the user config. */
+    private fun setVendorMode(v: Int?) {
+        val key = vendorStabKey() ?: return
+        val root = repo.userOverrides()
+        val cam = root.optJSONObject("camera") ?: JSONObject().also { root.put("camera", it) }
+        val old = cam.optJSONArray("vendorTags") ?: org.json.JSONArray()
+        val list = org.json.JSONArray()
+        for (i in 0 until old.length()) if (old.getJSONObject(i).optString("name") != key) list.put(old.getJSONObject(i))
+        if (v != null) list.put(JSONObject().put("name", key).put("type", "int").put("value", v))
+        cam.put("vendorTags", list)
+        repo.saveUserOverrides(root)
+    }
+
+    /** Long-press on OIS: every mode this camera exposes, selectable. */
+    private fun showOisMenu() {
+        val key = vendorStabKey()
+        val vm = vendorMode()
+        fun apply(mode: Int, vendor: Int?, touchVendor: Boolean) {
+            repo.set("camera.ois", mode != 2)
+            repo.set("stab.oisPolicy", if (mode == 1) "off" else "keep")
+            if (touchVendor) setVendorMode(vendor)
+            cfg = repo.load()
+            controls = controls.copy(ois = mode != 2)
+            Fx.pop(btnOis)
+            needReopen = true
+        }
+        fun mark(on: Boolean) = if (on) "●" else ""
+        val items = ArrayList<QuickMenu.Item>()
+        items += QuickMenu.Item("OIS вкл", { mark(oisMode() == 0) }, { apply(0, null, false) }, closeOnTap = true)
+        items += QuickMenu.Item("OIS авто (выкл при STAB)", { mark(oisMode() == 1) }, { apply(1, null, false) }, closeOnTap = true)
+        items += QuickMenu.Item("OIS выкл", { mark(oisMode() == 2) }, { apply(2, null, false) }, closeOnTap = true)
+        if (key != null) {
+            items += QuickMenu.Item("Режим прошивки: по умолчанию", { mark(vm == null) }, { apply(oisMode(), null, true) }, closeOnTap = true)
+            for (n in 0..3) items += QuickMenu.Item("Режим прошивки $n", { mark(vm == n) }, { apply(if (oisMode() == 2) 0 else oisMode(), n, true) }, closeOnTap = true)
+        }
+        items += QuickMenu.Item("Диагностика OIS…", { "" }, { runProbe() }, closeOnTap = true, accent = true)
+        needReopen = false
+        quickMenu.show(btnOis, items) { if (needReopen) { needReopen = false; openCamera() } }
+        if (key != null) toast("Режимы прошивки (${key.substringAfterLast('.')}): смысл 0–3 производитель не раскрывает, сравнивайте на картинке")
     }
 
     /** 0 = on, 1 = auto (off with STAB), 2 = off. */

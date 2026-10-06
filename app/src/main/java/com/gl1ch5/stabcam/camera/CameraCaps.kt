@@ -71,6 +71,9 @@ class CameraCaps(val id: String, val chars: CameraCharacteristics) {
         (chars.get(CameraCharacteristics.REQUEST_AVAILABLE_DYNAMIC_RANGE_PROFILES)?.supportedProfiles
             ?.contains(android.hardware.camera2.params.DynamicRangeProfiles.HLG10) == true)
 
+    /** Vendor (non-"android.") request keys that mention stabilisation, e.g. com.oplus.video.stabilization.mode. */
+    val vendorStabKeys: List<String> = chars.availableCaptureRequestKeys.map { it.name }.filter { it.contains("stabiliz", true) && !it.startsWith("android.") }.sorted()
+
     fun supportsHighSpeed(q: Quality): Boolean {
         val size = Size(q.width, q.height)
         val sizes = runCatching { map.highSpeedVideoSizes }.getOrNull() ?: return false
