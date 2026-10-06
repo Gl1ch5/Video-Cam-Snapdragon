@@ -50,26 +50,36 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         if: steps.changes.outputs.skip != 'true'
 
-      - name: Decode signing key (optional)
+      - name: Prepare signing key
         if: steps.changes.outputs.skip != 'true'
         env:
           KEYSTORE_BASE64: ${{ secrets.SIGNING_KEYSTORE_BASE64 }}
+          KS_PASSWORD: ${{ secrets.SIGNING_KEYSTORE_PASSWORD }}
+          KS_ALIAS: ${{ secrets.SIGNING_KEY_ALIAS }}
+          KS_KEY_PASSWORD: ${{ secrets.SIGNING_KEY_PASSWORD }}
         run: |
           if [ -n "$KEYSTORE_BASE64" ]; then
             echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.jks"
-            echo "SIGNING_KEYSTORE_PATH=$RUNNER_TEMP/release.jks" >> "$GITHUB_ENV"
+            path="$RUNNER_TEMP/release.jks"; pass="$KS_PASSWORD"; alias="$KS_ALIAS"; keypass="$KS_KEY_PASSWORD"
             echo "Using release keystore from secrets"
           else
-            echo "No SIGNING_KEYSTORE_BASE64 secret: APK will be signed with the debug key"
+            # No secrets: generate a throwaway key so the APK is still installable.
+            path="$RUNNER_TEMP/ci.jks"; pass="android"; alias="stabcam"; keypass="android"
+            keytool -genkeypair -keystore "$path" -storepass "$pass" -keypass "$keypass" \
+              -alias "$alias" -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=StabCam CI"
+            echo "No signing secrets: using a generated CI key (updates over a different key need uninstall)"
           fi
+          {
+            echo "SIGNING_KEYSTORE_PATH=$path"
+            echo "SIGNING_KEYSTORE_PASSWORD=$pass"
+            echo "SIGNING_KEY_ALIAS=$alias"
+            echo "SIGNING_KEY_PASSWORD=$keypass"
+          } >> "$GITHUB_ENV"
 
       - name: Build release APK
         if: steps.changes.outputs.skip != 'true'
         env:
           VERSION_CODE: ${{ github.run_number }}
-          SIGNING_KEYSTORE_PASSWORD: ${{ secrets.SIGNING_KEYSTORE_PASSWORD }}
-          SIGNING_KEY_ALIAS: ${{ secrets.SIGNING_KEY_ALIAS }}
-          SIGNING_KEY_PASSWORD: ${{ secrets.SIGNING_KEY_PASSWORD }}
         run: |
           export VERSION_SUFFIX="nightly.$(date -u +%Y%m%d).$(git rev-parse --short HEAD)"
           echo "VERSION_SUFFIX=$VERSION_SUFFIX" >> "$GITHUB_ENV"
