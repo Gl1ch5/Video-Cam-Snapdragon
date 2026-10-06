@@ -21,7 +21,9 @@ import android.hardware.camera2.CaptureFailure
 import android.hardware.camera2.CaptureResult
 import android.hardware.camera2.TotalCaptureResult
 import com.gl1ch5.stabcam.util.Logger
+import com.gl1ch5.stabcam.lut.Lut
 import com.gl1ch5.stabcam.stab.GyroTracker
+import com.gl1ch5.stabcam.stab.Mp4Tagger
 import com.gl1ch5.stabcam.stab.StabPipeline
 import com.gl1ch5.stabcam.stab.StabRecorder
 import com.gl1ch5.stabcam.stab.Stabilizer
@@ -72,6 +74,8 @@ class VideoCamera(private val ctx: Context, private val listener: Listener) {
     private var gyro: GyroTracker? = null
     private var pipeline: StabPipeline? = null
     private var stabRecording = false
+    private var lut: Lut? = null
+    private var lutStrength = 1f
     private var caps: CameraCaps? = null
     private var previewSurface: Surface? = null
     private var config: AppConfig? = null
@@ -82,6 +86,7 @@ class VideoCamera(private val ctx: Context, private val listener: Listener) {
     private var recorder: MediaRecorder? = null
     private var recordUri: Uri? = null
     private var recordPfd: ParcelFileDescriptor? = null
+    private var recordDescription: String? = null
     @Volatile var isRecording = false
         private set
 
@@ -123,6 +128,8 @@ class VideoCamera(private val ctx: Context, private val listener: Listener) {
         handler.post { closeInternal() }
         thread.quitSafely()
     }
+
+    fun setLut(l: Lut?, strength: Float) = handler.post { lut = l; lutStrength = strength; pipeline?.setLut(l, strength) }
 
     fun setPreviewRot(n: Int) = handler.post { pipeline?.previewRot = n }
 
@@ -441,7 +448,10 @@ class VideoCamera(private val ctx: Context, private val listener: Listener) {
         if (deleteFile) {
             runCatching { ctx.contentResolver.delete(uri, null, null) }
         } else {
-            val values = ContentValues().apply { put(MediaStore.Video.Media.IS_PENDING, 0) }
+            val values = ContentValues().apply {
+                put(MediaStore.Video.Media.IS_PENDING, 0)
+                recordDescription?.let { put(MediaStore.Video.Media.DESCRIPTION, it) }
+            }
             runCatching { ctx.contentResolver.update(uri, values, null, null) }
         }
     }
@@ -469,6 +479,7 @@ class VideoCamera(private val ctx: Context, private val listener: Listener) {
         }
         p.setZoom(controls.zoom)
         p.previewRot = cfg.stabPreviewRot
+        p.setLut(lut, lutStrength)
         p.setPreview(previewSurface)
         gyro = g
         pipeline = p
@@ -481,6 +492,7 @@ class VideoCamera(private val ctx: Context, private val listener: Listener) {
         val q = quality
         try {
             val pfd = createOutput()
+            recordDescription = summary(p)
             val hevc = cfg.codec.equals("hevc", true) && CameraCaps.encoderSupports(MediaFormat.MIMETYPE_VIDEO_HEVC, q.width, q.height, q.fps)
             val rec = StabRecorder(
                 pfd.fileDescriptor, q.width, q.height, q.fps, cfg.bitrateFor(q), hevc, orientationHint,
@@ -498,8 +510,30 @@ class VideoCamera(private val ctx: Context, private val listener: Listener) {
         }
     }
 
+    private fun summary(p: StabPipeline): String {
+        val cfg = config
+        val q = quality
+        val parts = mutableListOf(
+            "${q.width}x${q.height} ${q.fps}fps",
+            (if (cfg?.codec.equals("hevc", true)) "HEVC" else "H.264") + if (p.is10bit) " 10-bit HLG" else " 8-bit",
+            "${(cfg?.bitrateFor(q) ?: 0) / 1_000_000} Mbps",
+            "gyro stabilization (crop ${"%.2f".format(cfg?.stabCrop ?: 0f)}, denoise ${cfg?.stabDenoise})",
+            "OIS " + if (controls.ois) "on" else "off",
+        )
+        if (!cfg?.lutId.isNullOrEmpty()) parts += "LUT ${cfg?.lutId}"
+        return parts.joinToString(" | ")
+    }
+
     private fun stopStab() {
         val ok = pipeline?.stopRecording() ?: false
+        if (ok) recordPfd?.fileDescriptor?.let { fd ->
+            val soft = "StabCam ${com.gl1ch5.stabcam.BuildConfig.VERSION_NAME}"
+            val desc = recordDescription ?: ""
+            Mp4Tagger.tag(fd, listOf(
+                "mak" to android.os.Build.MANUFACTURER, "mod" to android.os.Build.MODEL, "swr" to soft, "too" to soft,
+                "cmt" to desc, "des" to desc, "inf" to "SoC ${android.os.Build.SOC_MODEL}",
+            ))
+        }
         isRecording = false
         stabRecording = false
         val uri = recordUri

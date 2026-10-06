@@ -8,6 +8,7 @@ import android.os.Handler
 import android.os.HandlerThread
 import android.view.Surface
 import com.gl1ch5.stabcam.util.Logger
+import com.gl1ch5.stabcam.lut.Lut
 import java.io.FileDescriptor
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
@@ -60,6 +61,10 @@ class StabPipeline(
     private val loc = HashMap<String, Int>()
     private val loc2d = HashMap<String, Int>()
     private val locDn = HashMap<String, Int>()
+    // 3D LUT (always bound; a 2x2x2 identity when no look is selected)
+    private var lutTex = 0
+    private var lutSize = 2f
+    @Volatile private var lutAmt = 0f
     private val fbo = IntArray(2)
     private val fboTex = IntArray(2)
     private var histIdx = 0
@@ -131,8 +136,12 @@ class StabPipeline(
         st.setDefaultBufferSize(width, height)
         st.setOnFrameAvailableListener({ if (!released) handler.post { drawFrame() } }, handler)
         cameraSurface = Surface(st)
+        val lt = IntArray(1)
+        GLES20.glGenTextures(1, lt, 0)
+        lutTex = lt[0]
+        uploadLut(2, ByteArray(2 * 2 * 2 * 3) { i -> val v = i / 3; val ch = i % 3; (if ((v shr ch) and 1 == 1) 255 else 0).toByte() })
         program = buildProgram(external = true)
-        val names = listOf("uTex", "uSize", "uK", "uZoom", "uPreview", "uSharp", "uBicubic", "uHdr", "uR")
+        val names = listOf("uTex", "uSize", "uK", "uZoom", "uPreview", "uSharp", "uBicubic", "uHdr", "uLut", "uLutAmt", "uLutN", "uR")
         for (n in names) loc[n] = GLES20.glGetUniformLocation(program, n)
         if (denoise > 0f) {
             program2d = buildProgram(external = false)
@@ -159,6 +168,29 @@ class StabPipeline(
             Logger.i(TAG, "Шумоподавление по времени: сила $denoise, допуск шума $denoiseSigma")
         }
         Logger.i(TAG, "GL готов: ${GLES20.glGetString(GLES20.GL_RENDERER)}, ${GLES20.glGetString(GLES20.GL_VERSION)}, буфер ${width}x$height")
+    }
+
+    private fun uploadLut(size: Int, rgb: ByteArray) {
+        GLES20.glActiveTexture(GLES20.GL_TEXTURE2)
+        GLES20.glBindTexture(GLES30.GL_TEXTURE_3D, lutTex)
+        GLES20.glPixelStorei(GLES20.GL_UNPACK_ALIGNMENT, 1)
+        GLES30.glTexImage3D(GLES30.GL_TEXTURE_3D, 0, GLES30.GL_RGB8, size, size, size, 0, GLES20.GL_RGB, GLES20.GL_UNSIGNED_BYTE, ByteBuffer.wrap(rgb))
+        for (p in intArrayOf(GLES20.GL_TEXTURE_MIN_FILTER, GLES20.GL_TEXTURE_MAG_FILTER)) GLES20.glTexParameteri(GLES30.GL_TEXTURE_3D, p, GLES20.GL_LINEAR)
+        for (p in intArrayOf(GLES20.GL_TEXTURE_WRAP_S, GLES20.GL_TEXTURE_WRAP_T, GLES30.GL_TEXTURE_WRAP_R)) GLES20.glTexParameteri(GLES30.GL_TEXTURE_3D, p, GLES20.GL_CLAMP_TO_EDGE)
+        lutSize = size.toFloat()
+    }
+
+    /** Applies [lut] (null = off) with [strength] 0..1 from the next frame. Ignored for 10-bit HLG output. */
+    fun setLut(lut: Lut?, strength: Float) {
+        handler.post {
+            if (lut == null) { lutAmt = 0f; return@post }
+            runCatching {
+                egl.makeCurrent(dummy!!)
+                uploadLut(lut.size, lut.rgb)
+                lutAmt = strength.coerceIn(0f, 1f)
+                Logger.i(TAG, "LUT: ${lut.name} (${lut.size}³), сила $lutAmt" + if (is10bit) " (в HLG не применяется)" else "")
+            }.onFailure { Logger.e(TAG, "LUT", it) }
+        }
     }
 
     fun setPreview(s: Surface?) {
@@ -322,6 +354,12 @@ class StabPipeline(
         GLES20.glUniform1f(l["uZoom"]!!, if (enabled) stabilizer.crop.toFloat() else 1f)
         GLES20.glUniform1i(l["uPreview"]!!, if (preview) previewRot else 0)
         GLES20.glUniform1i(l["uHdr"]!!, if (is10bit) 1 else 0)
+        GLES20.glActiveTexture(GLES20.GL_TEXTURE2)
+        GLES20.glBindTexture(GLES30.GL_TEXTURE_3D, lutTex)
+        GLES20.glUniform1i(l["uLut"]!!, 2)
+        GLES20.glUniform1f(l["uLutAmt"]!!, if (is10bit) 0f else lutAmt)
+        GLES20.glUniform1f(l["uLutN"]!!, lutSize)
+        GLES20.glActiveTexture(GLES20.GL_TEXTURE0)
         GLES20.glUniform1f(l["uSharp"]!!, sharpen)
         GLES20.glUniform1i(l["uBicubic"]!!, if (bicubic) 1 else 0)
         GLES30.glUniformMatrix3fv(l["uR"]!!, Stabilizer.ROWS, false, rows, 0)
@@ -369,6 +407,10 @@ class StabPipeline(
             uniform float uSharp;
             uniform int uBicubic;
             uniform int uHdr;
+            precision highp sampler3D;
+            uniform sampler3D uLut;
+            uniform float uLutAmt;
+            uniform float uLutN;
             uniform mat3 uR[$rowsN];
             in vec2 vPos;
             out vec4 o;
@@ -384,6 +426,12 @@ class StabPipeline(
                 l = max(m * l, vec3(0.0));
                 l = l * 3.5 / (1.0 + l * 2.5);
                 return pow(clamp(l, 0.0, 1.0), vec3(1.0 / 2.2));
+            }
+
+            vec3 grade(vec3 c) {
+                if (uLutAmt <= 0.0) return c;
+                vec3 t = clamp(c, 0.0, 1.0) * ((uLutN - 1.0) / uLutN) + 0.5 / uLutN;
+                return mix(c, texture(uLut, t).rgb, uLutAmt);
             }
 
             vec3 fetch(vec2 q) {
@@ -427,7 +475,7 @@ class StabPipeline(
                 vec3 s = R * d;
                 vec2 q = vec2(s.x / s.z * uK.x + uK.z, s.y / s.z * uK.y + uK.w) / uSize;
                 if (q.x < 0.0 || q.x > 1.0 || q.y < 0.0 || q.y > 1.0) { o = vec4(0.0, 0.0, 0.0, 1.0); return; }
-                if (uPreview > 0 || uBicubic == 0) { o = vec4(outc(fetch(q)), 1.0); return; }
+                if (uPreview > 0 || uBicubic == 0) { o = vec4(grade(outc(fetch(q))), 1.0); return; }
                 vec3 c = catmull(q);
                 if (uSharp > 0.0) {
                     vec2 px = 1.0 / uSize;
@@ -441,7 +489,7 @@ class StabPipeline(
                     // Limited overshoot: no halos around edges.
                     c = clamp(sh, min(lo, c) - 0.02, max(hi, c) + 0.02);
                 }
-                o = vec4(outc(c), 1.0);
+                o = vec4(grade(outc(c)), 1.0);
             }"""
         val p = GLES20.glCreateProgram()
         GLES20.glAttachShader(p, compile(GLES20.GL_VERTEX_SHADER, vs))

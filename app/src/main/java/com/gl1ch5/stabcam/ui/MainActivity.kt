@@ -36,6 +36,7 @@ import com.gl1ch5.stabcam.config.AppConfig
 import com.gl1ch5.stabcam.config.ConfigRepository
 import com.gl1ch5.stabcam.config.Quality
 import com.gl1ch5.stabcam.update.Updater
+import com.gl1ch5.stabcam.lut.Luts
 import com.gl1ch5.stabcam.stab.GyroTracker
 import org.json.JSONArray
 import com.gl1ch5.stabcam.util.Logger
@@ -43,6 +44,8 @@ import java.util.Locale
 import kotlin.concurrent.thread
 
 class MainActivity : Activity(), VideoCamera.Listener {
+    companion object { private const val REQ_LUT = 41 }
+
 
     private lateinit var repo: ConfigRepository
     private lateinit var cfg: AppConfig
@@ -54,6 +57,8 @@ class MainActivity : Activity(), VideoCamera.Listener {
     private lateinit var btnEis: TextView
     private lateinit var btnStab: TextView
     private lateinit var btnHdr: TextView
+    private lateinit var btnLut: TextView
+    private lateinit var lutPicker: LutPicker
     private lateinit var btnEv: TextView
     private lateinit var btnQuality: TextView
     private lateinit var btnSettings: ImageButton
@@ -140,6 +145,11 @@ class MainActivity : Activity(), VideoCamera.Listener {
         btnEis = findViewById(R.id.btnEis)
         btnStab = findViewById(R.id.btnStab)
         btnHdr = findViewById(R.id.btnHdr)
+        btnLut = findViewById(R.id.btnLut)
+        lutPicker = LutPicker(this, { id -> selectLut(id) }, {
+            startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("*/*"), REQ_LUT)
+        })
+        btnLut.setOnClickListener { if (!camera.isRecording) lutPicker.show(btnLut, cfg.lutId) }
         btnEv = findViewById(R.id.btnEv)
         btnQuality = findViewById(R.id.btnQuality)
         btnSettings = findViewById(R.id.btnSettings)
@@ -156,7 +166,7 @@ class MainActivity : Activity(), VideoCamera.Listener {
         info = findViewById(R.id.info)
         topBar = findViewById(R.id.topBar)
         shutterFlash = findViewById(R.id.shutterFlash)
-        listOf<View>(btnOis, btnEis, btnStab, btnHdr, btnEv, btnQuality, btnSettings, btnFlip, thumb).forEach { pressable(it) }
+        listOf<View>(btnLut, btnOis, btnEis, btnStab, btnHdr, btnEv, btnQuality, btnSettings, btnFlip, thumb).forEach { pressable(it) }
 
         btnRecord.setOnClickListener { toggleRecording() }
         btnOis.setOnClickListener {
@@ -357,6 +367,7 @@ class MainActivity : Activity(), VideoCamera.Listener {
     // --- VideoCamera.Listener (camera thread) ---
 
     override fun onSessionReady() = runOnUiThread {
+        applyLut()
         if (!probed && cfg.probeOnStart) {
             probed = true
             runProbe()
@@ -398,6 +409,7 @@ class MainActivity : Activity(), VideoCamera.Listener {
 
     private fun setRecordingUi(rec: Boolean) {
         fade(topBar, !rec)
+        fade(btnLut, !rec)
         fade(btnFlip, !rec)
         fade(thumb, !rec)
         fade(evPanel, false, View.GONE)
@@ -527,7 +539,7 @@ class MainActivity : Activity(), VideoCamera.Listener {
     }
 
     private fun rotateIcons(deg: Float) {
-        val views = listOf<View>(btnFlip, thumb, btnSettings, btnQuality, btnOis, btnEis, btnStab, btnHdr, btnEv) +
+        val views = listOf<View>(btnFlip, thumb, btnSettings, btnQuality, btnLut, btnOis, btnEis, btnStab, btnHdr, btnEv) +
             (0 until zoomRow.childCount).map { zoomRow.getChildAt(it) }
         views.forEach { it.animate().rotation(deg).setDuration(200).start() }
     }
@@ -559,6 +571,47 @@ class MainActivity : Activity(), VideoCamera.Listener {
             runOnUiThread { bmp?.let { thumb.setImageBitmap(it) } }
         }
     }
+
+    private fun selectLut(id: String) {
+        repo.set("video.lut", id)
+        cfg = repo.load()
+        applyLut()
+        toast(if (id.isEmpty()) "LUT выключен" else "LUT: ${lutTitle(id)}" + if (controls.stab) "" else " (нужен STAB)")
+    }
+
+    private fun lutTitle(id: String) = Luts.builtin.firstOrNull { it.id == id }?.name ?: id.removePrefix("file:").removeSuffix(".cube")
+
+    private fun applyLut() {
+        thread {
+            val l = Luts.resolve(this, cfg.lutId)
+            camera.setLut(l, cfg.lutStrength)
+            runOnUiThread {
+                setTextFade(btnLut, if (cfg.lutId.isEmpty()) "LUT" else lutTitle(cfg.lutId).take(10))
+                btnLut.setTextColor(getColor(if (cfg.lutId.isEmpty()) R.color.text else R.color.accent))
+            }
+        }
+    }
+
+    @Deprecated("Deprecated in Java")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode != REQ_LUT || resultCode != RESULT_OK) return
+        val uri = data?.data ?: return
+        thread {
+            val name = (queryName(uri) ?: "lut.cube").let { if (it.endsWith(".cube", true)) it else "$it.cube" }
+            val text = runCatching { contentResolver.openInputStream(uri)!!.bufferedReader().use { it.readText() } }.getOrNull()
+            val lut = text?.let { Luts.parseCube("file:$name", name.removeSuffix(".cube"), it) }
+            runOnUiThread {
+                if (lut == null) { toast("Не удалось прочитать .cube (нужен 3D LUT)"); return@runOnUiThread }
+                java.io.File(Luts.userDir(this), name).writeText(text!!)
+                Logger.i("LUT", "Импортирован $name (${lut.size}³)")
+                selectLut("file:$name")
+            }
+        }
+    }
+
+    private fun queryName(uri: Uri): String? = contentResolver.query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)
+        ?.use { if (it.moveToFirst()) it.getString(0) else null }
 
     private fun showCrash(trace: String) {
         android.app.AlertDialog.Builder(this)

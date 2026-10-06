@@ -14,7 +14,9 @@
     "audioBitrateKbps": 256,
     "audioSampleRate": 48000,
     "audioChannels": 2,
-    "hdr": "off"
+    "hdr": "off",
+    "lut": "",
+    "lutStrength": 1.0
   },
   "camera": {
     "lens": "back",

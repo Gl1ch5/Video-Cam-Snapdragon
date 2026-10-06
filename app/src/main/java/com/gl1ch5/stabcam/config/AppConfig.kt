@@ -43,6 +43,8 @@ class AppConfig(val json: JSONObject) {
     /** Offer every quality even if Camera2 does not advertise it (OEMs hide modes from third-party apps). */
     val forceAllQualities: Boolean = camera.optBoolean("forceAllQualities", false)
 
+    val lutId: String = video.optString("lut", "")
+    val lutStrength: Float = video.optDouble("lutStrength", 1.0).toFloat()
     val hdr: Boolean = video.optString("hdr", "off") == "hlg10"
     val stabTimeOffsetMs: Double = stab.optDouble("timeOffsetMs", 0.0)
     val updateAuto: Boolean = update.optBoolean("auto", true)
