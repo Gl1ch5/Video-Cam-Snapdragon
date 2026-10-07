@@ -540,7 +540,8 @@ class MainActivity : Activity(), VideoCamera.Listener {
         setTextFade(btnOis, vendorMode()?.let { "OIS·$it" } ?: if (oisMode() == 1) "OIS·A" else "OIS")
         val pname = profiles().firstOrNull { it.id == cfg.profileId }?.name ?: "Авто"
         Fx.slideText(modeLabel, pname.uppercase(), 1)
-        setTextFade(btnStab, if (simple) "Стаб" else "STAB")
+        val stabSuffix = when (Presets.indexOf(Presets.strength, repo.effectiveJson())) { 2 -> "+"; 3 -> "++"; else -> "" }
+        setTextFade(btnStab, (if (simple) "Стаб" else "STAB") + stabSuffix)
         styleToggle(btnOis, controls.ois, true)
         styleToggle(btnEis, controls.stockEis && c.hasStockEis, c.hasStockEis)
         styleToggle(btnStab, controls.stab && c.facingBack && !cfg.postMode, c.facingBack && !cfg.postMode)

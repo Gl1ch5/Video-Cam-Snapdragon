@@ -129,6 +129,9 @@ class StabPipeline(
 
     // stats
     private var frames = 0L
+    /** Smoothed GL time per frame (ms); when recording runs close to the frame budget the preview drops to every 2nd frame. */
+    private var renderEmaMs = 0.0
+    private var previewSkips = 0L
     private var statT = 0L
     private var statN = 0
     private var statRenderNs = 0L
@@ -363,7 +366,9 @@ class StabPipeline(
             useDn = runDenoise(qNow)
             prevQ = qNow
         }
-        previewSurf?.let { s ->
+        val skipPreview = rec != null && fps >= 50 && renderEmaMs > 0.65 * 1000.0 / fps && frames % 2L == 1L
+        if (skipPreview) previewSkips++
+        if (!skipPreview) previewSurf?.let { s ->
             egl.makeCurrent(s)
             draw(previewSize.first, previewSize.second, true, useDn)
             egl.swap(s)
@@ -384,17 +389,20 @@ class StabPipeline(
 
         // stats every 2 s
         statN++
-        statRenderNs += System.nanoTime() - t0
+        val dtNs = System.nanoTime() - t0
+        statRenderNs += dtNs
+        renderEmaMs += (dtNs / 1e6 - renderEmaMs) * 0.05
         statCorr += stabilizer.lastCorrectionDeg
         statMaxCorr = maxOf(statMaxCorr, stabilizer.lastCorrectionDeg)
         val now = System.nanoTime()
         if (statT == 0L) statT = now
         if (now - statT > 2_000_000_000L) {
-            Logger.i(TAG, "%.1f fps, кадр %.1f мс, интервал ср %.1f макс %.1f мс (норма %.1f), пропусков %d, поправка ср %.2f° макс %.2f° кроп %.3f, горизонт %.1f°, гиро %s, тепло %d, стаб %s".format(
+            Logger.i(TAG, "%.1f fps, кадр %.1f мс, интервал ср %.1f макс %.1f мс (норма %.1f), пропусков %d, поправка ср %.2f° макс %.2f° кроп %.3f, горизонт %.1f°, гиро %s, тепло %d, стаб %s, превью пропущено %d".format(
                 statN * 1e9 / (now - statT), statRenderNs / statN / 1e6,
                 if (statDtN > 0) statDtSum / statDtN / 1e6 else 0.0, statMaxDt / 1e6, 1000.0 / fps, statDrops,
                 statCorr / statN, statMaxCorr, stabilizer.crop, stabilizer.horizonNow,
-                if (gyro.latestTimeNs() - ts > -50_000_000L) "ok" else "ОТСТАЁТ", thermal(), if (enabled) "вкл" else "выкл"))
+                if (gyro.latestTimeNs() - ts > -50_000_000L) "ok" else "ОТСТАЁТ", thermal(), if (enabled) "вкл" else "выкл", previewSkips))
+            previewSkips = 0
             statT = now; statN = 0; statRenderNs = 0; statCorr = 0.0; statMaxCorr = 0.0
             if (statWn > 0) Logger.i(TAG, "Угловая скорость rms (°/с, оси устройства): x=%.1f y=%.1f z=%.1f".format(
                 Math.toDegrees(Math.sqrt(statW[0] / statWn)), Math.toDegrees(Math.sqrt(statW[1] / statWn)), Math.toDegrees(Math.sqrt(statW[2] / statWn))))
