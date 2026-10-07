@@ -18,6 +18,7 @@ object Mp4Tagger {
         var pos = 0L
         var moovPos = -1L
         var moovSize = 0L
+        var freeSize = 0L // a "free" box right after moov: short clips get moov at the front with reserved space
         val hdr = ByteArray(16)
         while (pos + 8 <= size) {
             Os.pread(fd, hdr, 0, 16.coerceAtMost((size - pos).toInt()), pos)
@@ -27,9 +28,25 @@ object Mp4Tagger {
             if (boxSize == 0L) boxSize = size - pos
             if (boxSize < 8) break
             if (type == "moov") { moovPos = pos; moovSize = boxSize }
+            if (type == "free" && moovPos >= 0 && pos == moovPos + moovSize && freeSize == 0L) freeSize = boxSize
             pos += boxSize
         }
-        if (moovPos < 0 || moovPos + moovSize != size || moovSize >= 0xFFFFFFFFL - 65536) {
+        val udtaLen = udta(items).size.toLong()
+        if (moovPos >= 0 && moovPos + moovSize != size && moovSize < 0xFFFFFFFFL - 65536 &&
+            (freeSize == udtaLen || freeSize >= udtaLen + 8)) {
+            // moov at the front: grow it into the reserved free space; nothing after it moves, so no offsets change
+            val udta = udta(items)
+            val at = moovPos + moovSize
+            val rest = freeSize - udtaLen
+            if (rest >= 8) {
+                val fh = ByteBuffer.allocate(8).putInt(rest.toInt()).put("free".toByteArray(Charsets.ISO_8859_1)).array()
+                Os.pwrite(fd, fh, 0, 8, at + udtaLen)
+            }
+            Os.pwrite(fd, udta, 0, udta.size, at)
+            Os.pwrite(fd, ByteBuffer.allocate(4).putInt((moovSize + udtaLen).toInt()).array(), 0, 4, moovPos)
+            Logger.i("Tag", "Метаданные записаны в резерв moov (${items.size} полей)")
+            true
+        } else if (moovPos < 0 || moovPos + moovSize != size || moovSize >= 0xFFFFFFFFL - 65536) {
             Logger.w("Tag", "moov не в конце файла, метаданные пропущены")
             false
         } else {
