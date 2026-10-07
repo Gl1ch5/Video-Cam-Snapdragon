@@ -31,6 +31,9 @@
   },
   "ui": {
     "showInfo": false,
+    "grid": false,
+    "level": false,
+    "marginBar": false,
     "mode": "pro"
   },
   "update": {

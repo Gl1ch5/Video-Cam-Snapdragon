@@ -155,6 +155,9 @@ class StabPipeline(
     /** Shake the phone for ~4 s: matches image motion against the gyro and reports the best axis mapping. */
     fun calibrateAxes(cb: (AxisCalibrator.Result?, String) -> Unit) { handler.post { calib = Calib(cb) } }
 
+    /** Share of the stabilization margin in use (negative when stabilization is off). */
+    fun marginUse(): Double = if (enabled && !rawMode) stabilizer.marginUse else -1.0
+
     fun setIso(v: Int) { if (v > 0) iso = v }
 
     /** Per-frame intrinsics from the HAL (focus breathing etc.); implausible values are ignored, the rest is smoothed. */

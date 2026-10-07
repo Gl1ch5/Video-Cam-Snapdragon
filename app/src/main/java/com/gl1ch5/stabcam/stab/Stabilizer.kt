@@ -45,6 +45,10 @@ class Stabilizer(private val p: Params) {
     var crop = (p.minCrop + p.maxCrop) / 2
         private set
 
+    /** Share of the crop margin the last offset used (0..1+), for the on-screen indicator. */
+    @Volatile var marginUse = 0.0
+        private set
+
     /** Last correction angle (deg), for stats. */
     var lastCorrectionDeg = 0.0
         private set
@@ -59,7 +63,7 @@ class Stabilizer(private val p: Params) {
         val cur = qv
         if (cur == null) {
             qv = real; prevReal = real; prevT = tNs
-            lastCorrectionDeg = 0.0
+            lastCorrectionDeg = 0.0; marginUse = 0.0
             return real
         }
         val dt = ((tNs - prevT) / 1e9).coerceIn(1e-4, 0.25)
@@ -98,6 +102,7 @@ class Stabilizer(private val p: Params) {
                 val probe = 8.0
                 val lim = FrameFit.scaleToFit(DoubleArray(3) { rv[it] * probe }, crop, fit) * probe // offset scale that just fits
                 val r = 1.0 / lim.coerceAtLeast(1e-6)
+                marginUse = r
                 val knee = SOFT_KNEE
                 val r2 = if (r <= knee) r else knee + (1 - knee) * kotlin.math.tanh((r - knee) / (1 - knee))
                 val k = (r2 / r).coerceAtMost(1.0) // r2 < 1 always, so the result fits

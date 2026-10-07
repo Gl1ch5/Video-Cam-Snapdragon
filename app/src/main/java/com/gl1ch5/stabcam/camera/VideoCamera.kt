@@ -77,6 +77,9 @@ class VideoCamera(private val ctx: Context, private val listener: Listener) {
     private var sessionHasRecorder = false
     private var gyro: GyroTracker? = null
     private var pipeline: StabPipeline? = null
+
+    /** For the on-screen margin indicator; negative when there is no stabilization. */
+    fun stabMarginUse(): Double = pipeline?.marginUse() ?: -1.0
     private var stabRecording = false
     private var lut: Lut? = null
     private var lutStrength = 1f

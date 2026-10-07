@@ -84,6 +84,9 @@ class AppConfig(val json: JSONObject) {
     val simpleMode: Boolean = ui.optString("mode", "pro") == "simple"
 
     val showInfo: Boolean = ui.optBoolean("showInfo", false)
+    val showGrid: Boolean = ui.optBoolean("grid", false)
+    val showLevel: Boolean = ui.optBoolean("level", false)
+    val showMargin: Boolean = ui.optBoolean("marginBar", false)
 
     data class VendorTag(val name: String, val type: String, val value: Any?)
 }

@@ -60,6 +60,21 @@ class MainActivity : Activity(), VideoCamera.Listener {
 
     private lateinit var preview: SurfaceView
     private lateinit var previewFrame: AspectFrameLayout
+    private lateinit var overlay: OverlayView
+    private val sensors by lazy { getSystemService(android.hardware.SensorManager::class.java) }
+    private val gravityListener = object : android.hardware.SensorEventListener {
+        override fun onSensorChanged(e: android.hardware.SensorEvent) {
+            // Portrait device frame: x right, y up. Roll 0 = upright.
+            overlay.rollDeg = Math.toDegrees(Math.atan2(e.values[0].toDouble(), e.values[1].toDouble()))
+        }
+        override fun onAccuracyChanged(s: android.hardware.Sensor?, a: Int) {}
+    }
+    private val overlayTick = object : Runnable {
+        override fun run() {
+            if (overlay.marginBar) overlay.margin = camera.stabMarginUse()
+            main.postDelayed(this, 100)
+        }
+    }
     private lateinit var btnOis: TextView
     private lateinit var btnEis: TextView
     private lateinit var btnStab: TextView
@@ -152,6 +167,8 @@ class MainActivity : Activity(), VideoCamera.Listener {
     private fun bindViews() {
         preview = findViewById(R.id.preview)
         previewFrame = findViewById(R.id.previewFrame)
+        overlay = OverlayView(this)
+        previewFrame.addView(overlay, android.widget.FrameLayout.LayoutParams(android.widget.FrameLayout.LayoutParams.MATCH_PARENT, android.widget.FrameLayout.LayoutParams.MATCH_PARENT))
         btnOis = findViewById(R.id.btnOis)
         btnEis = findViewById(R.id.btnEis)
         btnStab = findViewById(R.id.btnStab)
@@ -272,11 +289,13 @@ class MainActivity : Activity(), VideoCamera.Listener {
         }
         refreshThumb()
         maybeCheckUpdate()
+        applyOverlay()
     }
 
     override fun onPause() {
         super.onPause()
         orientationListener.disable()
+        stopOverlay()
         if (camera.isRecording) camera.stopRecording()
         camera.close()
     }
@@ -413,6 +432,7 @@ class MainActivity : Activity(), VideoCamera.Listener {
     }
 
     override fun onRecordingStarted() = runOnUiThread {
+        btnRecord.performHapticFeedback(android.view.HapticFeedbackConstants.CONFIRM)
         btnRecord.isEnabled = true
         btnRecord.recording = true
         recordStart = SystemClock.elapsedRealtime()
@@ -421,6 +441,7 @@ class MainActivity : Activity(), VideoCamera.Listener {
     }
 
     override fun onRecordingStopped(uri: Uri?) = runOnUiThread {
+        btnRecord.performHapticFeedback(android.view.HapticFeedbackConstants.REJECT)
         btnRecord.isEnabled = true
         btnRecord.recording = false
         setRecordingUi(false)
@@ -639,6 +660,28 @@ class MainActivity : Activity(), VideoCamera.Listener {
         repo.saveUserOverrides(root)
     }
 
+    /** Grid / level / margin bar from the config; sensors and the poll run only while something needs them. */
+    private fun applyOverlay() {
+        overlay.grid = cfg.showGrid; overlay.level = cfg.showLevel; overlay.marginBar = cfg.showMargin
+        stopOverlay()
+        if (cfg.showLevel) sensors?.getDefaultSensor(android.hardware.Sensor.TYPE_GRAVITY)?.let { sensors?.registerListener(gravityListener, it, android.hardware.SensorManager.SENSOR_DELAY_UI) }
+        if (cfg.showMargin) main.post(overlayTick)
+    }
+
+    private fun stopOverlay() {
+        sensors?.unregisterListener(gravityListener)
+        main.removeCallbacks(overlayTick)
+    }
+
+    private fun overlayItems(): List<QuickMenu.Item> {
+        fun flip(key: String, cur: () -> Boolean) = { repo.set(key, !cur()); cfg = repo.load(); applyOverlay() }
+        return listOf(
+            QuickMenu.Item("Сетка", { if (cfg.showGrid) "вкл" else "выкл" }, flip("ui.grid") { cfg.showGrid }),
+            QuickMenu.Item("Уровень", { if (cfg.showLevel) "вкл" else "выкл" }, flip("ui.level") { cfg.showLevel }),
+            QuickMenu.Item("Запас стабилизации", { if (cfg.showMargin) "вкл" else "выкл" }, flip("ui.marginBar") { cfg.showMargin }),
+        )
+    }
+
     private fun mark(on: Boolean) = if (on) "●" else ""
 
     /** Tap on STAB: pick the stabilization mode (and horizon level) from a drop-down. */
@@ -779,7 +822,7 @@ class MainActivity : Activity(), VideoCamera.Listener {
             QuickMenu.Item("Все настройки  ›", { "" }, { startActivity(Intent(this, SettingsActivity::class.java)) }, closeOnTap = true, accent = true),
         )
         needReopen = false
-        quickMenu.show(btnSettings, items) { Fx.spin(btnSettings, -90f); if (needReopen) { needReopen = false; openCamera() } }
+        quickMenu.show(btnSettings, items.dropLast(1) + overlayItems() + items.last()) { Fx.spin(btnSettings, -90f); if (needReopen) { needReopen = false; openCamera() } }
     }
 
     private fun selectLut(id: String) {
