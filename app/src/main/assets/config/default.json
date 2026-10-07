@@ -44,10 +44,10 @@
   },
   "stab": {
     "enabled": true,
-    "crop": 1.15,
-    "maxAngleDeg": 6.0,
+    "crop": 1.2,
+    "maxAngleDeg": 8.0,
     "tauMaxMs": 500,
-    "tauMinMs": 40,
+    "tauMinMs": 100,
     "readoutMs": 0,
     "gyroAxes": [
       "-y",

@@ -8,10 +8,10 @@ object Presets {
 
     /** Stabilization modes (GoPro-style): bigger margin = more shake absorbed, tighter field of view. The crop adapts to the shake, so calm scenes stay wide. */
     val strength = listOf(
-        Level("Лёгкая", mapOf("stab.crop" to 1.10, "stab.tauMaxMs" to 300, "stab.maxAngleDeg" to 4.0)),
-        Level("Стандарт", mapOf("stab.crop" to 1.15, "stab.tauMaxMs" to 500, "stab.maxAngleDeg" to 6.0)),
-        Level("Ходьба / бег", mapOf("stab.crop" to 1.30, "stab.tauMaxMs" to 700, "stab.maxAngleDeg" to 12.0)),
-        Level("Максимум", mapOf("stab.crop" to 1.40, "stab.tauMaxMs" to 900, "stab.maxAngleDeg" to 15.0)),
+        Level("Лёгкая", mapOf("stab.crop" to 1.12, "stab.tauMaxMs" to 300, "stab.maxAngleDeg" to 5.0, "stab.tauMinMs" to 100)),
+        Level("Стандарт", mapOf("stab.crop" to 1.20, "stab.tauMaxMs" to 500, "stab.maxAngleDeg" to 8.0, "stab.tauMinMs" to 100)),
+        Level("Ходьба / бег", mapOf("stab.crop" to 1.40, "stab.tauMaxMs" to 700, "stab.maxAngleDeg" to 15.0, "stab.tauMinMs" to 100)),
+        Level("Максимум", mapOf("stab.crop" to 1.55, "stab.tauMaxMs" to 900, "stab.maxAngleDeg" to 20.0, "stab.tauMinMs" to 100)),
     )
     val horizon = listOf(
         Level("Выкл", mapOf("stab.horizonDeg" to 0.0)),

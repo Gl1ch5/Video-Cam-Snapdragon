@@ -90,9 +90,19 @@ class Stabilizer(private val p: Params) {
         var out = if (rolled) (v * rollQ).normalized() else v
         var offQ = real.conj() * out
         if (fit != null) {
+            // Soft wall: how much of the margin this offset uses along its own direction, compressed smoothly past a knee
+            // (tanh), so the virtual camera glides into the limit instead of hitting it (a kink there is a visible jerk).
             val rv = offQ.toRotVec()
-            val k = FrameFit.scaleToFit(rv, crop, fit)
-            if (k < 1.0) { out = (real * Quat.fromRotVec(rv[0] * k, rv[1] * k, rv[2] * k)).normalized(); offQ = real.conj() * out }
+            val len = Math.sqrt(rv[0] * rv[0] + rv[1] * rv[1] + rv[2] * rv[2])
+            if (len > 1e-9) {
+                val probe = 8.0
+                val lim = FrameFit.scaleToFit(DoubleArray(3) { rv[it] * probe }, crop, fit) * probe // offset scale that just fits
+                val r = 1.0 / lim.coerceAtLeast(1e-6)
+                val knee = SOFT_KNEE
+                val r2 = if (r <= knee) r else knee + (1 - knee) * kotlin.math.tanh((r - knee) / (1 - knee))
+                val k = (r2 / r).coerceAtMost(1.0) // r2 < 1 always, so the result fits
+                if (k < 1.0) { out = (real * Quat.fromRotVec(rv[0] * k, rv[1] * k, rv[2] * k)).normalized(); offQ = real.conj() * out }
+            }
         } else {
             val off = offQ.angle()
             if (off > maxRad) { out = Quat.slerp(real, out, maxRad / off); offQ = real.conj() * out }
@@ -116,6 +126,8 @@ class Stabilizer(private val p: Params) {
 
     companion object {
         const val ROWS = 16
+        /** Fraction of the crop margin used linearly before the soft wall starts compressing. */
+        const val SOFT_KNEE = 0.6
 
         /**
          * Per-row source rotations (column-major mat3 each, [ROWS] of them) for the GL shader:

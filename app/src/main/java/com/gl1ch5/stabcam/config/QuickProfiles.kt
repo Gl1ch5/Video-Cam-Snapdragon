@@ -9,9 +9,9 @@ object QuickProfiles {
     private fun p(id: String, name: String, vararg v: Pair<String, Any>) = Profile(id, name, mapOf(*v))
 
     val builtin = listOf(
-        p("auto", "Авто", "stab.tauMaxMs" to 500, "stab.crop" to 1.15, "stab.maxAngleDeg" to 6.0, "stab.denoise" to 0.5, "stab.sharpen" to 0.35, "stab.horizonDeg" to 0.0, "video.lut" to "", "video.hdr" to "off"),
-        p("walk", "Прогулка", "stab.tauMaxMs" to 800, "stab.crop" to 1.30, "stab.maxAngleDeg" to 12.0, "stab.denoise" to 0.5, "stab.sharpen" to 0.35, "stab.horizonDeg" to 10.0, "video.lut" to "", "video.hdr" to "off"),
-        p("sport", "Спорт", "stab.tauMaxMs" to 300, "stab.crop" to 1.10, "stab.maxAngleDeg" to 4.0, "stab.denoise" to 0.3, "stab.sharpen" to 0.4, "stab.horizonDeg" to 0.0, "video.lut" to "vivid", "video.lutStrength" to 0.7, "video.hdr" to "off"),
+        p("auto", "Авто", "stab.tauMaxMs" to 500, "stab.crop" to 1.2, "stab.maxAngleDeg" to 8.0, "stab.denoise" to 0.5, "stab.sharpen" to 0.35, "stab.horizonDeg" to 0.0, "video.lut" to "", "video.hdr" to "off"),
+        p("walk", "Прогулка", "stab.tauMaxMs" to 800, "stab.crop" to 1.40, "stab.maxAngleDeg" to 15.0, "stab.denoise" to 0.5, "stab.sharpen" to 0.35, "stab.horizonDeg" to 10.0, "video.lut" to "", "video.hdr" to "off"),
+        p("sport", "Спорт", "stab.tauMaxMs" to 400, "stab.crop" to 1.40, "stab.maxAngleDeg" to 15.0, "stab.denoise" to 0.3, "stab.sharpen" to 0.4, "stab.horizonDeg" to 0.0, "video.lut" to "vivid", "video.lutStrength" to 0.7, "video.hdr" to "off"),
         p("night", "Ночь", "stab.tauMaxMs" to 600, "stab.crop" to 1.15, "stab.denoise" to 0.75, "stab.sharpen" to 0.2, "stab.horizonDeg" to 0.0, "video.lut" to "", "video.hdr" to "off"),
         p("cinema", "Кино", "stab.tauMaxMs" to 1200, "stab.crop" to 1.2, "stab.maxAngleDeg" to 9.0, "stab.denoise" to 0.5, "stab.sharpen" to 0.3, "stab.horizonDeg" to 10.0, "video.lut" to "cinema", "video.lutStrength" to 0.85, "video.hdr" to "off"),
         p("hdr", "HDR", "stab.tauMaxMs" to 500, "stab.crop" to 1.15, "stab.denoise" to 0.5, "stab.sharpen" to 0.3, "stab.horizonDeg" to 0.0, "video.lut" to "", "video.hdr" to "hlg10"),
