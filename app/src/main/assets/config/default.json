@@ -32,6 +32,7 @@
   "ui": {
     "showInfo": false,
     "grid": false,
+    "volumeKeyRecord": true,
     "level": false,
     "marginBar": false,
     "mode": "pro"
@@ -43,7 +44,7 @@
     "silent": false
   },
   "diagnostics": {
-    "probeOnStart": true
+    "probeOnStart": false
   },
   "stab": {
     "enabled": true,

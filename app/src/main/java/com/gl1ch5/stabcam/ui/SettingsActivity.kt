@@ -449,6 +449,11 @@ class SettingsActivity : Activity() {
     private fun system() {
         modeChoice()
         resetAllRow()
+        section("Экран")
+        toggle("Сетка третей", null, bool(repo.effectiveJson(), "ui.grid", false)) { repo.set("ui.grid", it) }
+        toggle("Электронный уровень", "Линия горизонта; зелёная, когда ровно.", bool(repo.effectiveJson(), "ui.level", false)) { repo.set("ui.level", it) }
+        toggle("Индикатор запаса стабилизации", "Полоска внизу превью: зелёная — запас есть, красная — стабилизация упирается в край.", bool(repo.effectiveJson(), "ui.marginBar", false)) { repo.set("ui.marginBar", it) }
+        toggle("Запись кнопками громкости", null, bool(repo.effectiveJson(), "ui.volumeKeyRecord", true)) { repo.set("ui.volumeKeyRecord", it) }
         section("Обновления")
         val up = getSharedPreferences("upd", MODE_PRIVATE)
         val lastMs = up.getLong("last_check", 0)

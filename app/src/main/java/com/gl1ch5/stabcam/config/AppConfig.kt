@@ -51,7 +51,7 @@ class AppConfig(val json: JSONObject) {
     val updateAuto: Boolean = update.optBoolean("auto", true)
     val updateRepo: String = update.optString("repo", "Gl1ch5/Video-Cam-Snapdragon")
     val updateTag: String = update.optString("tag", "nightly")
-    val probeOnStart: Boolean = diag.optBoolean("probeOnStart", true)
+    val probeOnStart: Boolean = diag.optBoolean("probeOnStart", false)
 
     val stabEnabled: Boolean = stab.optBoolean("enabled", true)
     val stabCrop: Float = stab.optDouble("crop", 1.15).toFloat()
@@ -84,6 +84,7 @@ class AppConfig(val json: JSONObject) {
     val simpleMode: Boolean = ui.optString("mode", "pro") == "simple"
 
     val showInfo: Boolean = ui.optBoolean("showInfo", false)
+    val volumeKeyRecord: Boolean = ui.optBoolean("volumeKeyRecord", true)
     val showGrid: Boolean = ui.optBoolean("grid", false)
     val showLevel: Boolean = ui.optBoolean("level", false)
     val showMargin: Boolean = ui.optBoolean("marginBar", false)

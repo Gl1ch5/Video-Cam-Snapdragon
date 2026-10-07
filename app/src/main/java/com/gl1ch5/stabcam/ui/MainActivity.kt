@@ -166,6 +166,7 @@ class MainActivity : Activity(), VideoCamera.Listener {
 
     private fun bindViews() {
         preview = findViewById(R.id.preview)
+        window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         previewFrame = findViewById(R.id.previewFrame)
         overlay = OverlayView(this)
         previewFrame.addView(overlay, android.widget.FrameLayout.LayoutParams(android.widget.FrameLayout.LayoutParams.MATCH_PARENT, android.widget.FrameLayout.LayoutParams.MATCH_PARENT))
@@ -290,6 +291,15 @@ class MainActivity : Activity(), VideoCamera.Listener {
         refreshThumb()
         maybeCheckUpdate()
         applyOverlay()
+    }
+
+    /** Volume keys start / stop recording, like the stock camera. */
+    override fun onKeyDown(keyCode: Int, event: android.view.KeyEvent): Boolean {
+        if (cfg.volumeKeyRecord && (keyCode == android.view.KeyEvent.KEYCODE_VOLUME_UP || keyCode == android.view.KeyEvent.KEYCODE_VOLUME_DOWN)) {
+            if (event.repeatCount == 0 && btnRecord.isEnabled) toggleRecording()
+            return true
+        }
+        return super.onKeyDown(keyCode, event)
     }
 
     override fun onPause() {
