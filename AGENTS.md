@@ -97,3 +97,5 @@ Android-приложение «только видео» с **собственн
 - Интринсики в StabPipeline по кадрам (`kCur`), не `kBase`.
 - Сигма денойза зависит от ISO (`sigmaEff()`); `FrameLog` содержит iso третьим элементом.
 - POST camera NR по умолчанию "minimal" — осознанный компромисс.
+- Граница запаса в `Stabilizer` мягкая (`SOFT_KNEE` = 0.6, tanh). Жёсткий упор давал рывки, и на беге выход был трясучее входа. Любые изменения сглаживания проверять `WalkSimTest` (симуляция ходьбы и бега, метрика — угловое ускорение).
+- `Stabilizer.marginUse` → `StabPipeline.marginUse()` → `VideoCamera.stabMarginUse()` → полоска в `OverlayView`.
